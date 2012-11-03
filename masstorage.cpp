@@ -1,59 +1,11 @@
 #include "masstorage.h"
 
-
-//bool BulkReadParser::IsValidCSW(uint8_t size, uint8_t *pcsw)
-//{
-//	if (size != 0x0d)
-//	{
-//		Notify(PSTR("CSW:Size error"));
-//		return false;
-//	}
-//	if (*((uint32_t*)pcsw) != MASS_CSW_SIGNATURE)
-//	{
-//		Notify(PSTR("CSW:Sig error"));
-//		return false;
-//	}
-//	//if (size != 0x0d || *((uint32_t*)pcsw) != MASS_CSW_SIGNATURE ||
-//	//	((CommandStatusWrapper*)pcsw)->dCSWTag != dCBWTag)
-//	//	return false;
-//	return true;
-//}
-
-//bool BulkReadParser::IsMeaningfulCSW(uint8_t size, uint8_t *pcsw)
-//{
-//	if (((CommandStatusWrapper*)pcsw)->bCSWStatus		<  2 && 
-//		((CommandStatusWrapper*)pcsw)->dCSWDataResidue	<= dCBWDataTransferLength )
-//		return true;
-//	if ( ((CommandStatusWrapper*)pcsw)->bCSWStatus == 2 )
-//		return true;
-//	return false;
-//}
-
-//void BulkReadParser::Parse(const uint16_t len, const uint8_t *pbuf, const uint16_t &offset)
-//{
-//	if (offset == 0 && len > sizeof(CommandStatusWrapper))
-//		if (IsValidCSW(sizeof(CommandStatusWrapper), pbuf) && IsMeaningfulCSW(sizeof(CommandStatusWrapper), pbuf))
-//		{
-//			CommandStatusWrapper	*pCSW = (CommandStatusWrapper*)pbuf;
-//
-//			Serial.println("Sig:");
-//			PrintHex<uint32_t>(pCSW->dCSWSignature);
-//			Serial.println("Tag:");
-//			PrintHex<uint32_t>(pCSW->dCSWTag);
-//			Serial.println("Res:");
-//			PrintHex<uint32_t>(pCSW->dCSWDataResidue);
-//			Serial.println("Ret:");
-//			PrintHex<uint8_t>(pCSW->bCSWStatus);
-//		}
-//}
-
 const uint8_t	BulkOnly::epDataInIndex			= 1;			
 const uint8_t	BulkOnly::epDataOutIndex		= 2;		
 const uint8_t	BulkOnly::epInterruptInIndex	= 3;	
 
-BulkOnly::BulkOnly(USB *p /*, CDCAsyncOper *pasync*/) :
+BulkOnly::BulkOnly(USB *p) :
 	pUsb(p),
-	//pAsync(pasync),
 	bAddress(0),
 	qNextPollTime(0),	
 	bPollEnable(false),	
@@ -207,16 +159,10 @@ uint8_t BulkOnly::Init(uint8_t parent, uint8_t port, bool lowspeed)
 
 	delay(10);
 
-    {
-        InquiryResponse response;
-        rcode = Inquiry(bMaxLUN, sizeof(InquiryResponse), (uint8_t*)&response);
+  rcode = Inquiry(bMaxLUN);
 
-		if (rcode)
-			goto FailInquiry;
-
-		//if (response.DeviceType != 0)
-		//	goto FailInvalidDevice;
-	}
+  if (rcode)
+    goto FailInquiry;
 
 	delay(10);
 
@@ -357,6 +303,13 @@ bool BulkOnly::IsMeaningfulCBW(uint8_t size, uint8_t *pcbw)
 	return true;
 }
 
+bool BulkOnly::IsValidAndMeaningfulCSW(const struct CommandStatusWrapper &csw, uint32_t tag)
+{
+  return  (csw.dCSWSignature == MASS_CSW_SIGNATURE && csw.dCSWTag == tag)
+          &&
+          (csw.bCSWStatus >= MASS_STA_SUCCESS && csw.bCSWStatus <= MASS_STA_PHASE_ERROR);
+}
+
 uint8_t BulkOnly::Reset()
 {
 	return( pUsb->ctrlReq( bAddress, 0, bmREQ_MASSOUT, MASS_REQ_BOMSR, 0, 0, bIface, 0, 0, NULL, NULL ));        
@@ -369,8 +322,6 @@ uint8_t BulkOnly::GetMaxLUN(uint8_t *plun)
 	bLastUsbError = pUsb->ctrlReq( bAddress, 0, bmREQ_MASSIN, MASS_REQ_GET_MAX_LUN, 0, 0, bIface, 1, 1, plun, NULL ); 
 	
 	delay(10);
-	//Serial.println(F("bLastUsbError: "));
-	//Serial.println(bLastUsbError);
 
 	if (bLastUsbError == hrSTALL)
 	{
@@ -443,12 +394,12 @@ uint8_t BulkOnly::Inquiry(uint8_t lun, uint16_t bsize, uint8_t *buf)
 {
 	CommandBlockWrapper cbw; 
 	
-	cbw.dCBWSignature			= MASS_CBW_SIGNATURE;
+	cbw.dCBWSignature		= MASS_CBW_SIGNATURE;
 	cbw.dCBWTag					= 0xdeadbeef;
 	cbw.dCBWDataTransferLength	= bsize;
-	cbw.bmCBWFlags				= MASS_CMD_DIR_IN,
+	cbw.bmCBWFlags			= MASS_CMD_DIR_IN,
 	cbw.bmCBWLUN				= lun;
-	cbw.bmCBWCBLength			= 6;
+	cbw.bmCBWCBLength		= 6;
 
 	for (uint8_t i=0; i<16; i++)
 		cbw.CBWCB[i] = 0;
@@ -458,17 +409,22 @@ uint8_t BulkOnly::Inquiry(uint8_t lun, uint16_t bsize, uint8_t *buf)
 
 	return Transaction(&cbw, bsize, buf, 0);
 }
+uint8_t BulkOnly::Inquiry(uint8_t lun)
+{
+  memset(&inquiry, 0, sizeof(inquiry));
+  return Inquiry(lun, sizeof(inquiry), (uint8_t*)&inquiry);
+}
 
 uint8_t BulkOnly::RequestSense(uint8_t lun, uint16_t size, uint8_t *buf)
 {
 	CommandBlockWrapper cbw; 
 	
-	cbw.dCBWSignature			= MASS_CBW_SIGNATURE;
+	cbw.dCBWSignature		= MASS_CBW_SIGNATURE;
 	cbw.dCBWTag					= 0xdeadbeef;
 	cbw.dCBWDataTransferLength	= size;
-	cbw.bmCBWFlags				= MASS_CMD_DIR_IN,
+	cbw.bmCBWFlags			= MASS_CMD_DIR_IN,
 	cbw.bmCBWLUN				= lun;
-	cbw.bmCBWCBLength			= 6;
+	cbw.bmCBWCBLength		= 6;
 
 	for (uint8_t i=0; i<16; i++)
 		cbw.CBWCB[i] = 0;
@@ -479,16 +435,22 @@ uint8_t BulkOnly::RequestSense(uint8_t lun, uint16_t size, uint8_t *buf)
 	return Transaction(&cbw, size, buf, 0);
 }
 
+uint8_t BulkOnly::RequestSense(uint8_t lun)
+{
+  memset(&sense, 0, sizeof(sense));
+  return RequestSense(lun, sizeof(sense), (uint8_t*)&sense);
+}
+
 uint8_t BulkOnly::ReadCapacity(uint8_t lun, uint16_t bsize, uint8_t *buf)
 {
 	CommandBlockWrapper cbw; 
 	
-	cbw.dCBWSignature			= MASS_CBW_SIGNATURE;
+	cbw.dCBWSignature		= MASS_CBW_SIGNATURE;
 	cbw.dCBWTag					= 0xdeadbeef;
 	cbw.dCBWDataTransferLength	= bsize;
-	cbw.bmCBWFlags				= MASS_CMD_DIR_IN,
+	cbw.bmCBWFlags			= MASS_CMD_DIR_IN,
 	cbw.bmCBWLUN				= lun;
-	cbw.bmCBWCBLength			= 10;
+	cbw.bmCBWCBLength		= 10;
 
 	for (uint8_t i=0; i<16; i++)
 		cbw.CBWCB[i] = 0;
@@ -499,16 +461,28 @@ uint8_t BulkOnly::ReadCapacity(uint8_t lun, uint16_t bsize, uint8_t *buf)
 	return Transaction(&cbw, bsize, buf, 0);
 }
 
+uint8_t BulkOnly::ReadCapacity(uint8_t lun)
+{
+  uint8_t r = ReadCapacity(lun, sizeof(capacity), (uint8_t*)&capacity);
+  if (r)
+    return r;
+  
+  capacity.dwMaxLBA = ntohl(capacity.dwMaxLBA);
+  capacity.dwBlockSize = ntohl(capacity.dwBlockSize);
+  
+  return r;
+}
+
 uint8_t BulkOnly::TestUnitReady(uint8_t lun)
 {
 	CommandBlockWrapper cbw; 
 	
-	cbw.dCBWSignature			= MASS_CBW_SIGNATURE;
+	cbw.dCBWSignature		= MASS_CBW_SIGNATURE;
 	cbw.dCBWTag					= 0xdeadbeef;
 	cbw.dCBWDataTransferLength	= 0;
-	cbw.bmCBWFlags				= MASS_CMD_DIR_OUT,
+	cbw.bmCBWFlags			= MASS_CMD_DIR_OUT,
 	cbw.bmCBWLUN				= lun;
-	cbw.bmCBWCBLength			= 6;
+	cbw.bmCBWCBLength		= 6;
 
 	for (uint8_t i=0; i<16; i++)
 		cbw.CBWCB[i] = 0;
@@ -522,18 +496,18 @@ uint8_t BulkOnly::Read(uint8_t lun, uint32_t addr, uint16_t bsize, USBReadParser
 {
 	CommandBlockWrapper cbw; 
 	
-	cbw.dCBWSignature			= MASS_CBW_SIGNATURE;
+	cbw.dCBWSignature		= MASS_CBW_SIGNATURE;
 	cbw.dCBWTag					= 0xdeadbeef;
 	cbw.dCBWDataTransferLength	= bsize;
-	cbw.bmCBWFlags				= MASS_CMD_DIR_IN,
+	cbw.bmCBWFlags			= MASS_CMD_DIR_IN,
 	cbw.bmCBWLUN				= lun;
-	cbw.bmCBWCBLength			= 10;
+	cbw.bmCBWCBLength		= 10;
 
 	for (uint8_t i=0; i<16; i++)
 		cbw.CBWCB[i] = 0;
 
 	cbw.CBWCB[0] = SCSI_CMD_READ_10;
-	cbw.CBWCB[8] = 1;
+	cbw.CBWCB[8] = 1; // blocks
 	cbw.CBWCB[5] = (addr & 0xff);
 	cbw.CBWCB[4] = ((addr >> 8) & 0xff);
 	cbw.CBWCB[3] = ((addr >> 16) & 0xff);
@@ -542,89 +516,124 @@ uint8_t BulkOnly::Read(uint8_t lun, uint32_t addr, uint16_t bsize, USBReadParser
 	return Transaction(&cbw, bsize, prs, 1);
 }
 
+// Follows Status Transport Flow on page 15
+uint8_t BulkOnly::GetStatus(uint32_t tag)
+{
+ 	uint16_t read;
+  CommandStatusWrapper csw;
+  read = sizeof(CommandStatusWrapper);
+
+  bLastUsbError = pUsb->inTransfer(bAddress, epInfo[epDataInIndex].epAddr, &read, (uint8_t*)&csw);
+  if (bLastUsbError == hrSTALL) {
+    ClearEpHalt(epDataInIndex);
+    bLastUsbError = pUsb->inTransfer(bAddress, epInfo[epDataInIndex].epAddr, &read, (uint8_t*)&csw);
+    if (bLastUsbError == hrSTALL) {
+      ErrorMessage<uint8_t>(PSTR("Stalled. Perform Reset Recovery"), bLastUsbError);
+      ResetRecovery();
+    }
+  }
+  
+  // Is CSW valid?
+  if (!IsValidAndMeaningfulCSW(csw, tag)) {
+      ErrorMessage<uint8_t>(PSTR("CSW is not valid. Perform Reset Recovery"), bLastUsbError);
+      ResetRecovery();
+  }
+
+  // Phase error?
+  if (csw.bCSWStatus == MASS_STA_PHASE_ERROR) {
+      ErrorMessage<uint8_t>(PSTR("Phase error. Perform Reset Recovery"), bLastUsbError);
+      ResetRecovery();
+  }
+  
+  if (csw.bCSWStatus == 1)
+    RequestSense();
+  
+  return csw.bCSWStatus;
+}
+
 uint8_t BulkOnly::Transaction(CommandBlockWrapper *cbw, uint16_t size, void *buf, uint8_t flags)
 {
 	uint16_t read;
-	{
-		bLastUsbError = pUsb->outTransfer(bAddress, epInfo[epDataOutIndex].epAddr, sizeof(CommandBlockWrapper), (uint8_t*)cbw);
-
-		uint8_t ret = HandleUsbError(epDataOutIndex);
-
-		if (ret)
-		{
-			ErrorMessage<uint8_t>(PSTR("CBW"), ret);
-			return ret;
-		}
-	}
-
+	
+	// Send CSW
+  bLastUsbError = pUsb->outTransfer(bAddress, epInfo[epDataOutIndex].epAddr, sizeof(CommandBlockWrapper), (uint8_t*)cbw);
+  if (bLastUsbError == hrSTALL) {
+    // FATAL
+    ErrorMessage<uint8_t>(PSTR("Fatal. Stall on CBW"), bLastUsbError);
+    bLastUsbError = ClearEpHalt(epDataOutIndex);
+    ResetRecovery();
+    return bLastUsbError;
+  }
+	
+	if (bLastUsbError)
+  {
+    ErrorMessage<uint8_t>(PSTR("CBW"), bLastUsbError);
+    return bLastUsbError;
+  }
+  
+  // Receive/Send
 	if (size && buf)
 	{
 		read = size;
 
+		// IN
 		if (cbw->bmCBWFlags & MASS_CMD_DIR_IN)
 		{
-			if ((flags & MASS_TRANS_FLG_CALLBACK) == MASS_TRANS_FLG_CALLBACK)
-			{
-				const uint8_t	bufSize = 64;
-				uint16_t		total	= size;
-				uint16_t		count	= 0;
-				uint8_t			rbuf[bufSize];
+      const uint8_t	bufSize = 64;
+      uint16_t		total	= size;
+      uint16_t		count	= 0;
+      uint8_t			rbuf[bufSize];
 
-				read = bufSize;
+#ifdef MASS_STG_DEBUG
+      memset(rbuf, 0x1F, bufSize);
+#endif
 
-				while(count < total && 
-					((bLastUsbError = pUsb->inTransfer(bAddress, epInfo[epDataInIndex].epAddr, &read, (uint8_t*)rbuf)) == hrSUCCESS)
-					)
-				{
-					((USBReadParser*)buf)->Parse(read, rbuf, count);
+      read = bufSize;
 
-					count += read;
-					read = bufSize;
-				}
+      do {
+        bLastUsbError = pUsb->inTransfer(bAddress, epInfo[epDataInIndex].epAddr, &read, (uint8_t*)rbuf);
+        if (bLastUsbError == hrSTALL) {
+          ErrorMessage<uint8_t>(PSTR("Stall on RECEIVE"), bLastUsbError);
+          bLastUsbError = ClearEpHalt(epDataInIndex);
+        }
+        
+        if ((flags & MASS_TRANS_FLG_CALLBACK) == MASS_TRANS_FLG_CALLBACK)
+        {
+          ((USBReadParser*)buf)->Parse(read, rbuf, count);
+          count += read;
+          read = bufSize;
+        } // if not MASS_TRANS_FLG_CALLBACK
+        else {
+          memcpy(((char*)buf)+count, rbuf, read); // Append to buf
+          count += read;
+          read = bufSize;
+        }
+      }
+      while(count < total && bLastUsbError == hrSUCCESS);
+      
+      if (bLastUsbError)
+      {
+        ErrorMessage<uint8_t>(PSTR("RDR"), bLastUsbError);
+        return MASS_ERR_GENERAL_USB_ERROR;
+      }
 
-				if (bLastUsbError == hrSTALL)
-					bLastUsbError = ClearEpHalt(epDataInIndex);
-
-				if (bLastUsbError)
-				{
-					ErrorMessage<uint8_t>(PSTR("RDR"), bLastUsbError);
-					return MASS_ERR_GENERAL_USB_ERROR;
-				}
-			} // if ((flags & 1) == 1)
-			else
-				bLastUsbError = pUsb->inTransfer(bAddress, epInfo[epDataInIndex].epAddr, &read, (uint8_t*)buf);
-		} // if (cbw->bmCBWFlags & MASS_CMD_DIR_IN)
-
-		else if (cbw->bmCBWFlags & MASS_CMD_DIR_OUT)
+      #ifdef MASS_STG_DEBUG				
+      ErrorMessage<uint16_t>(PSTR("Read bytes: "), count);
+      #endif
+			
+		} // OUT
+		else if (cbw->bmCBWFlags & MASS_CMD_DIR_OUT) {
 			bLastUsbError = pUsb->outTransfer(bAddress, epInfo[epDataOutIndex].epAddr, read, (uint8_t*)buf);
-	}
-
-	uint8_t ret = HandleUsbError((cbw->bmCBWFlags & MASS_CMD_DIR_IN) ? epDataInIndex : epDataOutIndex);
-
-	if (ret)
-	{
-		ErrorMessage<uint8_t>(PSTR("RSP"), ret);
-		return MASS_ERR_GENERAL_USB_ERROR;
-	}
-	{
-		CommandStatusWrapper	csw;
-		read = sizeof(CommandStatusWrapper);
-
-		bLastUsbError = pUsb->inTransfer(bAddress, epInfo[epDataInIndex].epAddr, &read, (uint8_t*)&csw);
-
-		uint8_t ret = HandleUsbError(epDataInIndex);
-
-		if (ret)
-		{
-			ErrorMessage<uint8_t>(PSTR("CSW"), ret);
-			return ret;
+      if (bLastUsbError)
+      {
+        ErrorMessage<uint8_t>(PSTR("RSP"), bLastUsbError);
+        return MASS_ERR_GENERAL_USB_ERROR;
+      }
 		}
-		//if (csw.bCSWStatus == MASS_ERR_PHASE_ERROR)
-		//	bLastUsbError = ResetRecovery();
+	} // Receive/Send
 
-		return csw.bCSWStatus;
-	}
-	//return MASS_ERR_SUCCESS;
+	// Separamos el get status
+	return GetStatus(cbw->dCBWTag);
 }
 
 void BulkOnly::PrintEndpointDescriptor( const USB_ENDPOINT_DESCRIPTOR* ep_ptr )

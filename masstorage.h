@@ -1,3 +1,26 @@
+/* FAT32 driver - Copyright (C) 2012 Leandro Fernández 
+
+For USB Host Library (C) Circuits At Home, LTD. All rights reserved.
+
+This software may be distributed and modified under the terms of the GNU
+General Public License version 2 (GPL2) as published by the Free Software
+Foundation and appearing in the file GPL2.TXT included in the packaging of
+this file. Please note that GPL2 Section 2[b] requires that all works based
+on this software must also be made publicly available under the terms of
+the GPL2 ("Copyleft").
+
+This implementation follows http://www.usb.org/developers/devclass_docs/usbmassbulk_10.pdf
+And is based on the original code from Circuits At Home, LTD
+
+Contact information
+-------------------
+
+Leandro Fernández
+Web      :  http://www.drk.com.ar
+e-mail   :  drkbugs@gmail.com
+
+Circuits At Home, LTD (http://www.circuitsathome.com)
+*/
 #if !defined(__MASSTORAGE_H__)
 #define __MASSTORAGE_H__
 
@@ -20,6 +43,9 @@
 #include "message.h"
 
 #include "confdescparser.h"
+
+#define MASS_STG_DEBUG 1
+
 
 #define SWAP(a, b) (((a) ^= (b)), ((b) ^= (a)), ((a) ^= (b)))
 
@@ -54,8 +80,8 @@
 #define MASS_CBW_SIGNATURE					0x43425355
 #define MASS_CSW_SIGNATURE					0x53425355
 
-#define MASS_CMD_DIR_OUT		            (0 << 7)
-#define MASS_CMD_DIR_IN					    (1 << 7)
+#define MASS_CMD_DIR_OUT		       0x00
+#define MASS_CMD_DIR_IN					   0x80
 
 #define SCSI_CMD_INQUIRY					0x12
 #define SCSI_CMD_REPORT_LUNS				0xA0
@@ -70,6 +96,10 @@
 #define SCSI_CMD_MODE_SENSE_6				0x1A
 #define SCSI_CMD_MODE_SENSE_10				0x5A
 
+#define MASS_STA_SUCCESS			0x00
+#define MASS_STA_FAILED				0x01
+#define MASS_STA_PHASE_ERROR	0x02
+
 #define MASS_ERR_SUCCESS					0x00
 #define MASS_ERR_PHASE_ERROR				0x01
 #define MASS_ERR_DEVICE_DISCONNECTED		0x11
@@ -83,9 +113,27 @@
 
 struct Capacity
 {
-	uint8_t		data[8];
-	//uint32_t dwBlockAddress;
-	//uint32_t dwBlockLength;
+	uint32_t dwMaxLBA;
+	uint32_t dwBlockSize;
+};
+
+struct SenseData
+{
+	uint8_t  ErrorCode    : 7;
+	uint8_t  Valid        : 1;
+	
+  uint8_t Reserved;
+  uint8_t SenseKey      : 4;
+  uint8_t Reserved2     : 4;
+  
+  uint8_t Information[4];
+  uint8_t AdditionalSenseLen;
+  uint8_t Reserved3[4];
+  uint8_t AdditionalSenseCode;
+  uint8_t AdditionalSenseCodeQualifier;
+  uint8_t Reserved4;
+  uint8_t Reserved5[3];
+  
 };
 
 struct InquiryResponse
@@ -170,16 +218,6 @@ struct RequestSenseResponce
 	uint8_t		SenseKeySpecific[3];
 };
 
-//class BulkReadParser : public USBReadParser
-//{
-//protected:
-//	bool IsValidCSW(uint8_t size, uint8_t *pcsw);
-//	bool IsMeaningfulCSW(uint8_t size, uint8_t *pcsw);
-//
-//public:
-//	virtual void Parse(const uint16_t len, const uint8_t *pbuf, const uint16_t &offset) = 0;
-//};
-
 #define MASS_MAX_ENDPOINTS		3
 
 class BulkOnly : public USBDeviceConfig, public UsbConfigXtracter
@@ -204,25 +242,27 @@ protected:
 	uint8_t		bMaxLUN;				// Max LUN
 	uint8_t		bLastUsbError;			// Last USB error
 
-protected:
-	//union TransFlags
-	//{
-	//	uint8_t			nValue;
+	Capacity capacity;
+	SenseData sense;
+  InquiryResponse inquiry;
 
-	//	struct {
-	//		uint8_t		bmCallback		: 1;
-	//		uint8_t		bmCheckPhaseErr	: 1;
-	//		uint8_t		bmDummy			: 6;
-	//	};
-	//};
+	
+protected:
 	void PrintEndpointDescriptor(const USB_ENDPOINT_DESCRIPTOR* ep_ptr);
 
 	bool IsValidCBW(uint8_t size, uint8_t *pcbw);
 	bool IsMeaningfulCBW(uint8_t size, uint8_t *pcbw);
 
+	bool IsValidAndMeaningfulCSW(const struct CommandStatusWrapper &csw, uint32_t tag);
+
 	uint8_t ClearEpHalt(uint8_t index);
+	uint8_t GetStatus(uint32_t tag);
 	uint8_t Transaction(CommandBlockWrapper *cbw, uint16_t bsize, void *buf, uint8_t flags);
 	uint8_t HandleUsbError(uint8_t index);
+
+	uint8_t Inquiry(uint8_t lun, uint16_t size, uint8_t *buf);
+	uint8_t ReadCapacity(uint8_t lun, uint16_t size, uint8_t *buf);
+	uint8_t RequestSense(uint8_t lun, uint16_t size, uint8_t *buf);
 
 public:
 	BulkOnly(USB *p);
@@ -232,11 +272,16 @@ public:
 	uint8_t GetMaxLUN(uint8_t *max_lun);
 
 	uint8_t ResetRecovery();
-	uint8_t Inquiry(uint8_t lun, uint16_t size, uint8_t *buf);
+	
+	uint8_t Inquiry() { return Inquiry(bMaxLUN); };
+	uint8_t Inquiry(uint8_t lun);
+	uint8_t TestUnitReady() { return TestUnitReady(bMaxLUN); };
 	uint8_t TestUnitReady(uint8_t lun);
-	uint8_t ReadCapacity(uint8_t lun, uint16_t size, uint8_t *buf);
-	uint8_t RequestSense(uint8_t lun, uint16_t size, uint8_t *buf);
-	//uint8_t Read(uint8_t lun, uint32_t addr, uint16_t bsize, uint8_t *buf);
+	uint8_t RequestSense() { return RequestSense(bMaxLUN); };
+	uint8_t RequestSense(uint8_t lun);
+	uint8_t ReadCapacity() { return ReadCapacity(bMaxLUN); };
+	uint8_t ReadCapacity(uint8_t lun);
+	uint8_t Read(uint32_t addr, uint16_t bsize, USBReadParser *prs) { return Read(bMaxLUN, addr, bsize, prs); };
 	uint8_t Read(uint8_t lun, uint32_t addr, uint16_t bsize, USBReadParser *prs);
 
 	// USBDeviceConfig implementation
@@ -247,6 +292,27 @@ public:
 
 	// UsbConfigXtracter implementation
 	virtual void EndpointXtract(uint8_t conf, uint8_t iface, uint8_t alt, uint8_t proto, const USB_ENDPOINT_DESCRIPTOR *ep);
+	
+	// Extras
+	
+	// Human readable capacity (in MBytes)
+	uint32_t GetCapacity() { return capacity.dwMaxLBA/1024/1024*capacity.dwBlockSize; };
+	const SenseData& GetLastSenseData() { return sense; };
+	const InquiryResponse& GetInquiry() { return inquiry; };
 };
+
+// Big / Little endian conversion
+#ifndef htons
+
+#define htons(x) ( ((x)<<8) | (((x)>>8)&0xFF) )
+#define ntohs(x) htons(x)
+
+#define htonl(x) ( ((x)<<24 & 0xFF000000UL) | \
+                   ((x)<< 8 & 0x00FF0000UL) | \
+                   ((x)>> 8 & 0x0000FF00UL) | \
+                   ((x)>>24 & 0x000000FFUL) )
+#define ntohl(x) htonl(x)
+
+#endif // htons
 
 #endif // __MASSTORAGE_H__
