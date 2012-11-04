@@ -145,32 +145,33 @@ uint8_t BulkOnly::Init(uint8_t parent, uint8_t port, bool lowspeed)
 	if (rcode)
 		goto FailSetConf;
 
-	delay(5000);
-
-	//rcode = pAsync->OnInit(this);
-
-	//if (rcode)
-	//	goto FailOnInit;
+	delay(200);
 
 	rcode = GetMaxLUN(&bMaxLUN);
 
 	if (rcode)
 		goto FailGetMaxLUN;
 
-	delay(10);
+	delay(500);
+
+  rcode = ReadCapacity(bMaxLUN);
+
+  if (rcode)
+    goto FailCapacity;
+
+	delay(200);
 
   rcode = Inquiry(bMaxLUN);
 
   if (rcode)
     goto FailInquiry;
 
-	delay(10);
 
 	USBTRACE("MS configured\r\n");
 
 	bPollEnable = true;
-
-	//USBTRACE("Poll enabled\r\n");
+	USBTRACE("Poll enabled\r\n");
+	
 	return 0;
 
 FailGetDevDescr:
@@ -200,9 +201,24 @@ FailGetMaxLUN:
 FailInquiry:
 	USBTRACE("Inquiry:");
 	goto Fail;
+	
+FailCapacity:
+	USBTRACE("Capacity:");
+	goto Fail;
 
 Fail:
 	Serial.println(rcode, HEX);
+	
+    const SenseData s = GetLastSenseData();
+    Serial.println("CSW");
+    Serial.println(csw.dCSWDataResidue);
+    Serial.println("Sense");
+    Serial.println(s.Valid);
+    Serial.println((uint32_t)s.Information);
+    Serial.println(s.SenseKey);
+    Serial.println(s.AdditionalSenseCode);
+    Serial.println(s.AdditionalSenseCodeQualifier);
+	
 	Release();
 	return rcode;
 }
@@ -399,7 +415,7 @@ uint8_t BulkOnly::Inquiry(uint8_t lun, uint16_t bsize, uint8_t *buf)
 	cbw.dCBWDataTransferLength	= bsize;
 	cbw.bmCBWFlags			= MASS_CMD_DIR_IN,
 	cbw.bmCBWLUN				= lun;
-	cbw.bmCBWCBLength		= 6;
+	cbw.bmCBWCBLength		= 12;
 
 	for (uint8_t i=0; i<16; i++)
 		cbw.CBWCB[i] = 0;
@@ -424,7 +440,7 @@ uint8_t BulkOnly::RequestSense(uint8_t lun, uint16_t size, uint8_t *buf)
 	cbw.dCBWDataTransferLength	= size;
 	cbw.bmCBWFlags			= MASS_CMD_DIR_IN,
 	cbw.bmCBWLUN				= lun;
-	cbw.bmCBWCBLength		= 6;
+	cbw.bmCBWCBLength		= 12;
 
 	for (uint8_t i=0; i<16; i++)
 		cbw.CBWCB[i] = 0;
@@ -450,13 +466,12 @@ uint8_t BulkOnly::ReadCapacity(uint8_t lun, uint16_t bsize, uint8_t *buf)
 	cbw.dCBWDataTransferLength	= bsize;
 	cbw.bmCBWFlags			= MASS_CMD_DIR_IN,
 	cbw.bmCBWLUN				= lun;
-	cbw.bmCBWCBLength		= 10;
+	cbw.bmCBWCBLength		= 12;
 
 	for (uint8_t i=0; i<16; i++)
 		cbw.CBWCB[i] = 0;
 
 	cbw.CBWCB[0] = SCSI_CMD_READ_CAPACITY_10;
-	cbw.CBWCB[4] = bsize;
 
 	return Transaction(&cbw, bsize, buf, 0);
 }
@@ -466,9 +481,13 @@ uint8_t BulkOnly::ReadCapacity(uint8_t lun)
   uint8_t r = ReadCapacity(lun, sizeof(capacity), (uint8_t*)&capacity);
   if (r)
     return r;
-  
+
   capacity.dwMaxLBA = ntohl(capacity.dwMaxLBA);
   capacity.dwBlockSize = ntohl(capacity.dwBlockSize);
+#ifdef MASS_STG_DEBUG
+  ErrorMessage<uint32_t>(PSTR("dwMaxLBA"), capacity.dwMaxLBA);
+  ErrorMessage<uint32_t>(PSTR("dwBlockSize"), capacity.dwBlockSize);
+#endif
   
   return r;
 }
@@ -492,8 +511,11 @@ uint8_t BulkOnly::TestUnitReady(uint8_t lun)
 	return Transaction(&cbw, 0, NULL, 0);
 }
 
-uint8_t BulkOnly::Read(uint8_t lun, uint32_t addr, uint16_t bsize, USBReadParser *prs)
+uint8_t BulkOnly::Read(uint8_t lun, uint32_t addr, uint16_t bsize, uint8_t *buffer, uint8_t flags)
 {
+  if (bsize % capacity.dwBlockSize)
+    return MASS_ERR_BUFFER_SIZE_INDISCRETE; // Buffer has to be multiple of block size
+  
 	CommandBlockWrapper cbw; 
 	
 	cbw.dCBWSignature		= MASS_CBW_SIGNATURE;
@@ -507,28 +529,53 @@ uint8_t BulkOnly::Read(uint8_t lun, uint32_t addr, uint16_t bsize, USBReadParser
 		cbw.CBWCB[i] = 0;
 
 	cbw.CBWCB[0] = SCSI_CMD_READ_10;
-	cbw.CBWCB[8] = 1; // blocks
+	cbw.CBWCB[8] = bsize / capacity.dwBlockSize; // blocks
 	cbw.CBWCB[5] = (addr & 0xff);
 	cbw.CBWCB[4] = ((addr >> 8) & 0xff);
 	cbw.CBWCB[3] = ((addr >> 16) & 0xff);
 	cbw.CBWCB[2] = ((addr >> 24) & 0xff);
 
-	return Transaction(&cbw, bsize, prs, 1);
+	return Transaction(&cbw, bsize, buffer, flags);
+}
+
+uint8_t BulkOnly::Write(uint8_t lun, uint32_t addr, uint16_t bsize, uint8_t *buffer, uint8_t flags)
+{
+  if (bsize % capacity.dwBlockSize)
+    return MASS_ERR_BUFFER_SIZE_INDISCRETE; // Buffer has to be multiple of block size
+  
+	CommandBlockWrapper cbw; 
+	
+	cbw.dCBWSignature		= MASS_CBW_SIGNATURE;
+	cbw.dCBWTag					= 0xdeadbeef;
+	cbw.dCBWDataTransferLength	= bsize;
+	cbw.bmCBWFlags			= MASS_CMD_DIR_OUT,
+	cbw.bmCBWLUN				= lun;
+	cbw.bmCBWCBLength		= 12;
+
+	for (uint8_t i=0; i<16; i++)
+		cbw.CBWCB[i] = 0;
+
+	cbw.CBWCB[0] = SCSI_CMD_WRITE_10;
+	cbw.CBWCB[8] = (uint16_t)(bsize / capacity.dwBlockSize); // blocks
+	cbw.CBWCB[5] = (addr & 0xff);
+	cbw.CBWCB[4] = ((addr >> 8) & 0xff);
+	cbw.CBWCB[3] = ((addr >> 16) & 0xff);
+	cbw.CBWCB[2] = ((addr >> 24) & 0xff);
+
+	return Transaction(&cbw, bsize, buffer, flags);
 }
 
 // Follows Status Transport Flow on page 15
 uint8_t BulkOnly::GetStatus(uint32_t tag)
 {
- 	uint16_t read;
-  CommandStatusWrapper csw;
-  read = sizeof(CommandStatusWrapper);
+  uint16_t read = sizeof(CommandStatusWrapper);
 
   bLastUsbError = pUsb->inTransfer(bAddress, epInfo[epDataInIndex].epAddr, &read, (uint8_t*)&csw);
   if (bLastUsbError == hrSTALL) {
     ClearEpHalt(epDataInIndex);
     bLastUsbError = pUsb->inTransfer(bAddress, epInfo[epDataInIndex].epAddr, &read, (uint8_t*)&csw);
     if (bLastUsbError == hrSTALL) {
-      ErrorMessage<uint8_t>(PSTR("Stalled. Perform Reset Recovery"), bLastUsbError);
+      ErrorMessage<uint8_t>(PSTR("Get CSW stalled. Perform Reset Recovery"), bLastUsbError);
       ResetRecovery();
     }
   }
@@ -545,16 +592,18 @@ uint8_t BulkOnly::GetStatus(uint32_t tag)
       ResetRecovery();
   }
   
-  if (csw.bCSWStatus == 1)
+  if (csw.bCSWStatus == 1) {
+#ifdef MASS_STG_DEBUG
+  ErrorMessage<uint32_t>(PSTR("dCSWDataResidue"), csw.dCSWDataResidue);
+#endif
     RequestSense();
+  }
   
   return csw.bCSWStatus;
 }
 
 uint8_t BulkOnly::Transaction(CommandBlockWrapper *cbw, uint16_t size, void *buf, uint8_t flags)
 {
-	uint16_t read;
-	
 	// Send CSW
   bLastUsbError = pUsb->outTransfer(bAddress, epInfo[epDataOutIndex].epAddr, sizeof(CommandBlockWrapper), (uint8_t*)cbw);
   if (bLastUsbError == hrSTALL) {
@@ -574,7 +623,6 @@ uint8_t BulkOnly::Transaction(CommandBlockWrapper *cbw, uint16_t size, void *buf
   // Receive/Send
 	if (size && buf)
 	{
-		read = size;
 
 		// IN
 		if (cbw->bmCBWFlags & MASS_CMD_DIR_IN)
@@ -583,9 +631,10 @@ uint8_t BulkOnly::Transaction(CommandBlockWrapper *cbw, uint16_t size, void *buf
       uint16_t		total	= size;
       uint16_t		count	= 0;
       uint8_t			rbuf[bufSize];
+      uint16_t read;
 
 #ifdef MASS_STG_DEBUG
-      memset(rbuf, 0x1F, bufSize);
+      ErrorMessage<uint16_t>(PSTR("IN will read"), size);
 #endif
 
       read = bufSize;
@@ -593,7 +642,7 @@ uint8_t BulkOnly::Transaction(CommandBlockWrapper *cbw, uint16_t size, void *buf
       do {
         bLastUsbError = pUsb->inTransfer(bAddress, epInfo[epDataInIndex].epAddr, &read, (uint8_t*)rbuf);
         if (bLastUsbError == hrSTALL) {
-          ErrorMessage<uint8_t>(PSTR("Stall on RECEIVE"), bLastUsbError);
+          ErrorMessage<uint8_t>(PSTR("Stall on RECEIVE"), cbw->CBWCB[0]);
           bLastUsbError = ClearEpHalt(epDataInIndex);
         }
         
@@ -604,14 +653,14 @@ uint8_t BulkOnly::Transaction(CommandBlockWrapper *cbw, uint16_t size, void *buf
           read = bufSize;
         } // if not MASS_TRANS_FLG_CALLBACK
         else {
-          memcpy(((char*)buf)+count, rbuf, read); // Append to buf
+          memcpy((((uint8_t*)buf)+count), rbuf, read); // Append to buf
           count += read;
           read = bufSize;
         }
       }
       while(count < total && bLastUsbError == hrSUCCESS);
       
-      if (bLastUsbError)
+      if (bLastUsbError && bLastUsbError != hrSTALL)
       {
         ErrorMessage<uint8_t>(PSTR("RDR"), bLastUsbError);
         return MASS_ERR_GENERAL_USB_ERROR;
@@ -623,7 +672,14 @@ uint8_t BulkOnly::Transaction(CommandBlockWrapper *cbw, uint16_t size, void *buf
 			
 		} // OUT
 		else if (cbw->bmCBWFlags & MASS_CMD_DIR_OUT) {
-			bLastUsbError = pUsb->outTransfer(bAddress, epInfo[epDataOutIndex].epAddr, read, (uint8_t*)buf);
+		  
+      if ((flags & MASS_TRANS_FLG_CALLBACK) == MASS_TRANS_FLG_CALLBACK)
+      {
+        return 0xFF; // Not implemented
+      }
+
+      uint16_t write = size;
+			bLastUsbError = pUsb->outTransfer(bAddress, epInfo[epDataOutIndex].epAddr, write, (uint8_t*)buf);
       if (bLastUsbError)
       {
         ErrorMessage<uint8_t>(PSTR("RSP"), bLastUsbError);

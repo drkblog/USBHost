@@ -100,13 +100,14 @@ Circuits At Home, LTD (http://www.circuitsathome.com)
 #define MASS_STA_FAILED				0x01
 #define MASS_STA_PHASE_ERROR	0x02
 
-#define MASS_ERR_SUCCESS					0x00
-#define MASS_ERR_PHASE_ERROR				0x01
-#define MASS_ERR_DEVICE_DISCONNECTED		0x11
-#define MASS_ERR_UNABLE_TO_RECOVER			0x12	// Reset recovery error
-#define MASS_ERR_GENERAL_USB_ERROR			0xFF
+#define MASS_ERR_SUCCESS                  0x00
+#define MASS_ERR_PHASE_ERROR              0x01
+#define MASS_ERR_DEVICE_DISCONNECTED      0x11
+#define MASS_ERR_UNABLE_TO_RECOVER			  0x12	// Reset recovery error
+#define MASS_ERR_BUFFER_SIZE_INDISCRETE		0xFE  // Buffer has to be multiple of block size
+#define MASS_ERR_GENERAL_USB_ERROR        0xFF
 
-#define MASS_TRANS_FLG_CALLBACK				0x01	// Callback is involved
+#define MASS_TRANS_FLG_CALLBACK         0x01	// Callback is involved
 #define MASS_TRANS_FLG_NO_STALL_CHECK		0x02	// STALL condition is not checked
 #define MASS_TRANS_FLG_NO_PHASE_CHECK		0x04	// PHASE_ERROR is not checked
 
@@ -245,7 +246,7 @@ protected:
 	Capacity capacity;
 	SenseData sense;
   InquiryResponse inquiry;
-
+  CommandStatusWrapper csw; // Lastone
 	
 protected:
 	void PrintEndpointDescriptor(const USB_ENDPOINT_DESCRIPTOR* ep_ptr);
@@ -259,6 +260,7 @@ protected:
 	uint8_t GetStatus(uint32_t tag);
 	uint8_t Transaction(CommandBlockWrapper *cbw, uint16_t bsize, void *buf, uint8_t flags);
 	uint8_t HandleUsbError(uint8_t index);
+	uint8_t GetMaxLUN(uint8_t *max_lun);
 
 	uint8_t Inquiry(uint8_t lun, uint16_t size, uint8_t *buf);
 	uint8_t ReadCapacity(uint8_t lun, uint16_t size, uint8_t *buf);
@@ -269,7 +271,6 @@ public:
 	uint8_t GetLastUsbError() { return bLastUsbError; };
 
 	uint8_t Reset();
-	uint8_t GetMaxLUN(uint8_t *max_lun);
 
 	uint8_t ResetRecovery();
 	
@@ -281,8 +282,10 @@ public:
 	uint8_t RequestSense(uint8_t lun);
 	uint8_t ReadCapacity() { return ReadCapacity(bMaxLUN); };
 	uint8_t ReadCapacity(uint8_t lun);
-	uint8_t Read(uint32_t addr, uint16_t bsize, USBReadParser *prs) { return Read(bMaxLUN, addr, bsize, prs); };
-	uint8_t Read(uint8_t lun, uint32_t addr, uint16_t bsize, USBReadParser *prs);
+	uint8_t Read(uint32_t addr, uint16_t bsize, uint8_t *buffer, uint8_t flags) { return Read(bMaxLUN, addr, bsize, buffer, flags); };
+	uint8_t Read(uint8_t lun, uint32_t addr, uint16_t bsize, uint8_t *buffer, uint8_t flags);
+	uint8_t Write(uint32_t addr, uint16_t bsize, uint8_t *buffer, uint8_t flags) { return Write(bMaxLUN, addr, bsize, buffer, flags); };
+	uint8_t Write(uint8_t lun, uint32_t addr, uint16_t bsize, uint8_t *buffer, uint8_t flags);
 
 	// USBDeviceConfig implementation
 	virtual uint8_t Init(uint8_t parent, uint8_t port, bool lowspeed);
@@ -296,7 +299,10 @@ public:
 	// Extras
 	
 	// Human readable capacity (in MBytes)
-	uint32_t GetCapacity() { return capacity.dwMaxLBA/1024/1024*capacity.dwBlockSize; };
+	uint32_t GetCapacityMB() { return capacity.dwMaxLBA/1024/1024*capacity.dwBlockSize; };
+	
+	// ReadOnly access to internal structures
+	const Capacity& GetCapacity() { return capacity; };
 	const SenseData& GetLastSenseData() { return sense; };
 	const InquiryResponse& GetInquiry() { return inquiry; };
 };
