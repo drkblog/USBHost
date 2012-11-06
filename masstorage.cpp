@@ -547,16 +547,16 @@ uint8_t BulkOnly::Write(uint8_t lun, uint32_t addr, uint16_t bsize, uint8_t *buf
 	
 	cbw.dCBWSignature		= MASS_CBW_SIGNATURE;
 	cbw.dCBWTag					= 0xdeadbeef;
-	cbw.dCBWDataTransferLength	= bsize;
+	cbw.dCBWDataTransferLength = bsize;
 	cbw.bmCBWFlags			= MASS_CMD_DIR_OUT,
 	cbw.bmCBWLUN				= lun;
-	cbw.bmCBWCBLength		= 12;
+	cbw.bmCBWCBLength		= 9;
 
 	for (uint8_t i=0; i<16; i++)
 		cbw.CBWCB[i] = 0;
 
 	cbw.CBWCB[0] = SCSI_CMD_WRITE_10;
-	cbw.CBWCB[8] = (uint16_t)(bsize / capacity.dwBlockSize); // blocks
+	cbw.CBWCB[8] = (bsize / capacity.dwBlockSize); // blocks
 	cbw.CBWCB[5] = (addr & 0xff);
 	cbw.CBWCB[4] = ((addr >> 8) & 0xff);
 	cbw.CBWCB[3] = ((addr >> 16) & 0xff);
@@ -569,15 +569,16 @@ uint8_t BulkOnly::Write(uint8_t lun, uint32_t addr, uint16_t bsize, uint8_t *buf
 uint8_t BulkOnly::GetStatus(uint32_t tag)
 {
   uint16_t read = sizeof(CommandStatusWrapper);
-
+  uint8_t retry = 5;
+  
   bLastUsbError = pUsb->inTransfer(bAddress, epInfo[epDataInIndex].epAddr, &read, (uint8_t*)&csw);
-  if (bLastUsbError == hrSTALL) {
+  while(bLastUsbError == hrSTALL && retry--) {
     ClearEpHalt(epDataInIndex);
     bLastUsbError = pUsb->inTransfer(bAddress, epInfo[epDataInIndex].epAddr, &read, (uint8_t*)&csw);
-    if (bLastUsbError == hrSTALL) {
-      ErrorMessage<uint8_t>(PSTR("Get CSW stalled. Perform Reset Recovery"), bLastUsbError);
-      ResetRecovery();
-    }
+  }
+  if (bLastUsbError == hrSTALL) {
+    ErrorMessage<uint8_t>(PSTR("Get CSW stalled. Perform Reset Recovery"), bLastUsbError);
+    ResetRecovery();
   }
   
   // Is CSW valid?
@@ -623,11 +624,11 @@ uint8_t BulkOnly::Transaction(CommandBlockWrapper *cbw, uint16_t size, void *buf
   // Receive/Send
 	if (size && buf)
 	{
+    const uint8_t	bufSize = 64;
 
 		// IN
 		if (cbw->bmCBWFlags & MASS_CMD_DIR_IN)
 		{
-      const uint8_t	bufSize = 64;
       uint16_t		total	= size;
       uint16_t		count	= 0;
       uint8_t			rbuf[bufSize];
@@ -671,23 +672,49 @@ uint8_t BulkOnly::Transaction(CommandBlockWrapper *cbw, uint16_t size, void *buf
       #endif
 			
 		} // OUT
-		else if (cbw->bmCBWFlags & MASS_CMD_DIR_OUT) {
+		else {
 		  
       if ((flags & MASS_TRANS_FLG_CALLBACK) == MASS_TRANS_FLG_CALLBACK)
       {
         return 0xFF; // Not implemented
       }
-
-      uint16_t write = size;
-			bLastUsbError = pUsb->outTransfer(bAddress, epInfo[epDataOutIndex].epAddr, write, (uint8_t*)buf);
-      if (bLastUsbError)
-      {
-        ErrorMessage<uint8_t>(PSTR("RSP"), bLastUsbError);
-        return MASS_ERR_GENERAL_USB_ERROR;
+      
+      ErrorMessage<uint16_t>(PSTR("Sending "), size);
+      uint8_t retry = 30;
+      do {
+        bLastUsbError = pUsb->outTransfer(bAddress, epInfo[epDataOutIndex].epAddr, size, (uint8_t*)buf);
+        if (bLastUsbError == hrNAK) {
+          ErrorMessage<uint8_t>(PSTR("NAK"), bLastUsbError);
+          delay(1000);
+        }
+        else if (bLastUsbError) {
+          ErrorMessage<uint8_t>(PSTR("RSP"), bLastUsbError);
+          return MASS_ERR_GENERAL_USB_ERROR;
+        }
       }
+      while(bLastUsbError == hrNAK && retry--);
+/*
+      uint16_t pending = size;
+      uint8_t * pb = (uint8_t*)buf;
+      do {
+        uint16_t write = (pending < bufSize) ? pending : bufSize;
+        bLastUsbError = pUsb->outTransfer(bAddress, epInfo[epDataOutIndex].epAddr, write, pb);
+        if (bLastUsbError)
+        {
+          ErrorMessage<uint8_t>(PSTR("RSP"), bLastUsbError);
+          return MASS_ERR_GENERAL_USB_ERROR;
+        }
+          ErrorMessage<uint8_t>(PSTR("Sent "), write);
+        pb += write;
+        pending -= write;
+      }
+      while(pending);
+*/      
 		}
 	} // Receive/Send
 
+  delay(1000);
+	
 	// Separamos el get status
 	return GetStatus(cbw->dCBWTag);
 }
