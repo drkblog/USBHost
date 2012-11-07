@@ -145,32 +145,34 @@ uint8_t BulkOnly::Init(uint8_t parent, uint8_t port, bool lowspeed)
 	if (rcode)
 		goto FailSetConf;
 
-	delay(200);
+	delay(100);
 
 	rcode = GetMaxLUN(&bMaxLUN);
 
 	if (rcode)
 		goto FailGetMaxLUN;
 
-	delay(500);
+	delay(100);
 
   rcode = ReadCapacity(bMaxLUN);
 
   if (rcode)
     goto FailCapacity;
 
-	delay(200);
+	delay(100);
 
-  rcode = Inquiry(bMaxLUN);
+	InquiryResponse inquiry;
+  rcode = Inquiry(bMaxLUN, &inquiry);
 
   if (rcode)
     goto FailInquiry;
 
+	delay(100);
 
 	USBTRACE("MS configured\r\n");
 
 	bPollEnable = true;
-	USBTRACE("Poll enabled\r\n");
+	//USBTRACE("Poll enabled\r\n");
 	
 	return 0;
 
@@ -425,10 +427,10 @@ uint8_t BulkOnly::Inquiry(uint8_t lun, uint16_t bsize, uint8_t *buf)
 
 	return Transaction(&cbw, bsize, buf, 0);
 }
-uint8_t BulkOnly::Inquiry(uint8_t lun)
+uint8_t BulkOnly::Inquiry(uint8_t lun, InquiryResponse * inquiry)
 {
-  memset(&inquiry, 0, sizeof(inquiry));
-  return Inquiry(lun, sizeof(inquiry), (uint8_t*)&inquiry);
+  memset(inquiry, 0, sizeof(InquiryResponse));
+  return Inquiry(lun, sizeof(InquiryResponse), (uint8_t*)inquiry);
 }
 
 uint8_t BulkOnly::RequestSense(uint8_t lun, uint16_t size, uint8_t *buf)
@@ -593,7 +595,7 @@ uint8_t BulkOnly::GetStatus(uint32_t tag)
       ResetRecovery();
   }
   
-  if (csw.bCSWStatus == 1) {
+  if (csw.bCSWStatus == 2) {
 #ifdef MASS_STG_DEBUG
   ErrorMessage<uint32_t>(PSTR("dCSWDataResidue"), csw.dCSWDataResidue);
 #endif
@@ -626,6 +628,8 @@ uint8_t BulkOnly::Transaction(CommandBlockWrapper *cbw, uint16_t size, void *buf
 	{
     const uint8_t	bufSize = 64;
 
+HexDumper<USBReadParser, uint16_t, uint16_t> hexDump;
+
 		// IN
 		if (cbw->bmCBWFlags & MASS_CMD_DIR_IN)
 		{
@@ -654,6 +658,10 @@ uint8_t BulkOnly::Transaction(CommandBlockWrapper *cbw, uint16_t size, void *buf
           read = bufSize;
         } // if not MASS_TRANS_FLG_CALLBACK
         else {
+      #ifdef MASS_STG_DEBUG
+      hexDump.Parse(read, rbuf, count);
+      ErrorMessage<uint32_t>(PSTR("POS: "),(int)((uint8_t*)buf)+count);
+      #endif
           memcpy((((uint8_t*)buf)+count), rbuf, read); // Append to buf
           count += read;
           read = bufSize;

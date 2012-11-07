@@ -245,7 +245,6 @@ protected:
 
 	Capacity capacity;
 	SenseData sense;
-  InquiryResponse inquiry;
   CommandStatusWrapper csw; // Lastone
 	
 protected:
@@ -274,8 +273,8 @@ public:
 
 	uint8_t ResetRecovery();
 	
-	uint8_t Inquiry() { return Inquiry(bMaxLUN); };
-	uint8_t Inquiry(uint8_t lun);
+	uint8_t Inquiry(InquiryResponse * inquiry) { return Inquiry(bMaxLUN, inquiry); };
+	uint8_t Inquiry(uint8_t lun, InquiryResponse * inquiry);
 	uint8_t TestUnitReady() { return TestUnitReady(bMaxLUN); };
 	uint8_t TestUnitReady(uint8_t lun);
 	uint8_t RequestSense() { return RequestSense(bMaxLUN); };
@@ -304,7 +303,7 @@ public:
 	// ReadOnly access to internal structures
 	const Capacity& GetCapacity() { return capacity; };
 	const SenseData& GetLastSenseData() { return sense; };
-	const InquiryResponse& GetInquiry() { return inquiry; };
+//	const InquiryResponse& GetInquiry() { return inquiry; };
 };
 
 // Big / Little endian conversion

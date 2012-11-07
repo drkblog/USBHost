@@ -25,15 +25,28 @@ Circuits At Home, LTD (http://www.circuitsathome.com)
 #include <max3421e.h>
 #include <Usb.h>
 #include <masstorage.h>
+#include <fat32structs.h>
+
+#define FAT32_ERR_SUCCESS   0x00
+#define FAT32_ERR_LOW_LEVEL 0x01
+#define FAT32_ERR_NOT_FAT32 0x02
+#define FAT32_ERR_NOT_ENOUGH_MEMORY 0x03
 
 class FAT32
 {
 private:
   BulkOnly * bulk;
   
+  fat32_boot_t * bootsec;
+  uint8_t sub_error;
+  
 public:
-  FAT32(BulkOnly  * bulk) : bulk(bulk) {};
+  FAT32(BulkOnly  * bulk) : bulk(bulk), sub_error(0), bootsec(0) {};
+  ~FAT32();
+  uint8_t Init();
   void dump();
+  
+  uint8_t GetSubError() { return sub_error; };
 };
 
 #endif // __FAT32_H__
