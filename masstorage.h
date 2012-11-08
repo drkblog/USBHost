@@ -199,26 +199,6 @@ struct CommandStatusWrapper
 	uint8_t		bCSWStatus;
 };
 
-struct RequestSenseResponce
-{
-	uint8_t		bResponseCode;
-	uint8_t		bSegmentNumber;
-
-	uint8_t		bmSenseKey            : 4;
-	uint8_t		bmReserved            : 1;
-	uint8_t		bmILI                 : 1;
-	uint8_t		bmEOM                 : 1;
-	uint8_t		bmFileMark            : 1;
-
-	uint8_t		Information[4];
-	uint8_t		bAdditionalLength;
-	uint8_t		CmdSpecificInformation[4];
-	uint8_t		bAdditionalSenseCode;
-	uint8_t		bAdditionalSenseQualifier;
-	uint8_t		bFieldReplaceableUnitCode;
-	uint8_t		SenseKeySpecific[3];
-};
-
 #define MASS_MAX_ENDPOINTS		3
 
 class BulkOnly : public USBDeviceConfig, public UsbConfigXtracter
@@ -242,21 +222,18 @@ protected:
 	uint32_t	dCBWDataTransferLength;	// Data Transfer Length
 	uint8_t		bMaxLUN;				// Max LUN
 	uint8_t		bLastUsbError;			// Last USB error
+	uint32_t        dwBlockSize;
 
-	Capacity capacity;
-	SenseData sense;
-  CommandStatusWrapper csw; // Lastone
-	
 protected:
 	void PrintEndpointDescriptor(const USB_ENDPOINT_DESCRIPTOR* ep_ptr);
 
 	bool IsValidCBW(uint8_t size, uint8_t *pcbw);
 	bool IsMeaningfulCBW(uint8_t size, uint8_t *pcbw);
 
-	bool IsValidAndMeaningfulCSW(const struct CommandStatusWrapper &csw, uint32_t tag);
+	bool IsValidAndMeaningfulCSW(CommandStatusWrapper * csw, uint32_t tag);
 
 	uint8_t ClearEpHalt(uint8_t index);
-	uint8_t GetStatus(uint32_t tag);
+	uint8_t GetStatus(uint32_t tag, CommandStatusWrapper * csw);
 	uint8_t Transaction(CommandBlockWrapper *cbw, uint16_t bsize, void *buf, uint8_t flags);
 	uint8_t HandleUsbError(uint8_t index);
 	uint8_t GetMaxLUN(uint8_t *max_lun);
@@ -277,10 +254,10 @@ public:
 	uint8_t Inquiry(uint8_t lun, InquiryResponse * inquiry);
 	uint8_t TestUnitReady() { return TestUnitReady(bMaxLUN); };
 	uint8_t TestUnitReady(uint8_t lun);
-	uint8_t RequestSense() { return RequestSense(bMaxLUN); };
-	uint8_t RequestSense(uint8_t lun);
-	uint8_t ReadCapacity() { return ReadCapacity(bMaxLUN); };
-	uint8_t ReadCapacity(uint8_t lun);
+	uint8_t RequestSense(SenseData * sense) { return RequestSense(bMaxLUN, sense); };
+	uint8_t RequestSense(uint8_t lun, SenseData * sense);
+	uint8_t ReadCapacity(Capacity * capacity) { return ReadCapacity(bMaxLUN, capacity); };
+	uint8_t ReadCapacity(uint8_t lun, Capacity * capacity);
 	uint8_t Read(uint32_t addr, uint16_t bsize, uint8_t *buffer, uint8_t flags) { return Read(bMaxLUN, addr, bsize, buffer, flags); };
 	uint8_t Read(uint8_t lun, uint32_t addr, uint16_t bsize, uint8_t *buffer, uint8_t flags);
 	uint8_t Write(uint32_t addr, uint16_t bsize, uint8_t *buffer, uint8_t flags) { return Write(bMaxLUN, addr, bsize, buffer, flags); };
@@ -295,15 +272,6 @@ public:
 	// UsbConfigXtracter implementation
 	virtual void EndpointXtract(uint8_t conf, uint8_t iface, uint8_t alt, uint8_t proto, const USB_ENDPOINT_DESCRIPTOR *ep);
 	
-	// Extras
-	
-	// Human readable capacity (in MBytes)
-	uint32_t GetCapacityMB() { return capacity.dwMaxLBA/1024/1024*capacity.dwBlockSize; };
-	
-	// ReadOnly access to internal structures
-	const Capacity& GetCapacity() { return capacity; };
-	const SenseData& GetLastSenseData() { return sense; };
-//	const InquiryResponse& GetInquiry() { return inquiry; };
 };
 
 // Big / Little endian conversion

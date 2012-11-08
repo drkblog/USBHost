@@ -154,13 +154,6 @@ uint8_t BulkOnly::Init(uint8_t parent, uint8_t port, bool lowspeed)
 
 	delay(100);
 
-  rcode = ReadCapacity(bMaxLUN);
-
-  if (rcode)
-    goto FailCapacity;
-
-	delay(100);
-
 	InquiryResponse inquiry;
   rcode = Inquiry(bMaxLUN, &inquiry);
 
@@ -168,6 +161,12 @@ uint8_t BulkOnly::Init(uint8_t parent, uint8_t port, bool lowspeed)
     goto FailInquiry;
 
 	delay(100);
+	
+	Capacity capacity;
+	rcode = ReadCapacity(bMaxLUN, &capacity);
+	
+  if (rcode)
+    goto FailCapacity;
 
 	USBTRACE("MS configured\r\n");
 
@@ -203,17 +202,16 @@ FailGetMaxLUN:
 FailInquiry:
 	USBTRACE("Inquiry:");
 	goto Fail;
-	
+
 FailCapacity:
 	USBTRACE("Capacity:");
 	goto Fail;
-
+	
 Fail:
 	Serial.println(rcode, HEX);
 	
-    const SenseData s = GetLastSenseData();
-    Serial.println("CSW");
-    Serial.println(csw.dCSWDataResidue);
+    SenseData s;
+    RequestSense(&s);
     Serial.println("Sense");
     Serial.println(s.Valid);
     Serial.println((uint32_t)s.Information);
@@ -321,11 +319,11 @@ bool BulkOnly::IsMeaningfulCBW(uint8_t size, uint8_t *pcbw)
 	return true;
 }
 
-bool BulkOnly::IsValidAndMeaningfulCSW(const struct CommandStatusWrapper &csw, uint32_t tag)
+bool BulkOnly::IsValidAndMeaningfulCSW(CommandStatusWrapper * csw, uint32_t tag)
 {
-  return  (csw.dCSWSignature == MASS_CSW_SIGNATURE && csw.dCSWTag == tag)
+  return  (csw->dCSWSignature == MASS_CSW_SIGNATURE && csw->dCSWTag == tag)
           &&
-          (csw.bCSWStatus >= MASS_STA_SUCCESS && csw.bCSWStatus <= MASS_STA_PHASE_ERROR);
+          (csw->bCSWStatus >= MASS_STA_SUCCESS && csw->bCSWStatus <= MASS_STA_PHASE_ERROR);
 }
 
 uint8_t BulkOnly::Reset()
@@ -453,10 +451,10 @@ uint8_t BulkOnly::RequestSense(uint8_t lun, uint16_t size, uint8_t *buf)
 	return Transaction(&cbw, size, buf, 0);
 }
 
-uint8_t BulkOnly::RequestSense(uint8_t lun)
+uint8_t BulkOnly::RequestSense(uint8_t lun, SenseData * sense)
 {
-  memset(&sense, 0, sizeof(sense));
-  return RequestSense(lun, sizeof(sense), (uint8_t*)&sense);
+  memset(sense, 0, sizeof(SenseData));
+  return RequestSense(lun, sizeof(SenseData), (uint8_t*)sense);
 }
 
 uint8_t BulkOnly::ReadCapacity(uint8_t lun, uint16_t bsize, uint8_t *buf)
@@ -478,17 +476,18 @@ uint8_t BulkOnly::ReadCapacity(uint8_t lun, uint16_t bsize, uint8_t *buf)
 	return Transaction(&cbw, bsize, buf, 0);
 }
 
-uint8_t BulkOnly::ReadCapacity(uint8_t lun)
+uint8_t BulkOnly::ReadCapacity(uint8_t lun, Capacity * capacity)
 {
-  uint8_t r = ReadCapacity(lun, sizeof(capacity), (uint8_t*)&capacity);
+  uint8_t r = ReadCapacity(lun, sizeof(Capacity), (uint8_t*)capacity);
   if (r)
     return r;
 
-  capacity.dwMaxLBA = ntohl(capacity.dwMaxLBA);
-  capacity.dwBlockSize = ntohl(capacity.dwBlockSize);
+  capacity->dwMaxLBA = ntohl(capacity->dwMaxLBA);
+  dwBlockSize = capacity->dwBlockSize = ntohl(capacity->dwBlockSize);
+     
 #ifdef MASS_STG_DEBUG
-  ErrorMessage<uint32_t>(PSTR("dwMaxLBA"), capacity.dwMaxLBA);
-  ErrorMessage<uint32_t>(PSTR("dwBlockSize"), capacity.dwBlockSize);
+  ErrorMessage<uint32_t>(PSTR("dwMaxLBA"), capacity->dwMaxLBA);
+  ErrorMessage<uint32_t>(PSTR("dwBlockSize"), capacity->dwBlockSize);
 #endif
   
   return r;
@@ -515,7 +514,7 @@ uint8_t BulkOnly::TestUnitReady(uint8_t lun)
 
 uint8_t BulkOnly::Read(uint8_t lun, uint32_t addr, uint16_t bsize, uint8_t *buffer, uint8_t flags)
 {
-  if (bsize % capacity.dwBlockSize)
+  if (bsize % dwBlockSize)
     return MASS_ERR_BUFFER_SIZE_INDISCRETE; // Buffer has to be multiple of block size
   
 	CommandBlockWrapper cbw; 
@@ -531,7 +530,7 @@ uint8_t BulkOnly::Read(uint8_t lun, uint32_t addr, uint16_t bsize, uint8_t *buff
 		cbw.CBWCB[i] = 0;
 
 	cbw.CBWCB[0] = SCSI_CMD_READ_10;
-	cbw.CBWCB[8] = bsize / capacity.dwBlockSize; // blocks
+	cbw.CBWCB[8] = bsize / dwBlockSize; // blocks
 	cbw.CBWCB[5] = (addr & 0xff);
 	cbw.CBWCB[4] = ((addr >> 8) & 0xff);
 	cbw.CBWCB[3] = ((addr >> 16) & 0xff);
@@ -542,7 +541,7 @@ uint8_t BulkOnly::Read(uint8_t lun, uint32_t addr, uint16_t bsize, uint8_t *buff
 
 uint8_t BulkOnly::Write(uint8_t lun, uint32_t addr, uint16_t bsize, uint8_t *buffer, uint8_t flags)
 {
-  if (bsize % capacity.dwBlockSize)
+  if (bsize % dwBlockSize)
     return MASS_ERR_BUFFER_SIZE_INDISCRETE; // Buffer has to be multiple of block size
   
 	CommandBlockWrapper cbw; 
@@ -558,7 +557,7 @@ uint8_t BulkOnly::Write(uint8_t lun, uint32_t addr, uint16_t bsize, uint8_t *buf
 		cbw.CBWCB[i] = 0;
 
 	cbw.CBWCB[0] = SCSI_CMD_WRITE_10;
-	cbw.CBWCB[8] = (bsize / capacity.dwBlockSize); // blocks
+	cbw.CBWCB[8] = (bsize / dwBlockSize); // blocks
 	cbw.CBWCB[5] = (addr & 0xff);
 	cbw.CBWCB[4] = ((addr >> 8) & 0xff);
 	cbw.CBWCB[3] = ((addr >> 16) & 0xff);
@@ -568,15 +567,15 @@ uint8_t BulkOnly::Write(uint8_t lun, uint32_t addr, uint16_t bsize, uint8_t *buf
 }
 
 // Follows Status Transport Flow on page 15
-uint8_t BulkOnly::GetStatus(uint32_t tag)
+uint8_t BulkOnly::GetStatus(uint32_t tag, CommandStatusWrapper * csw)
 {
   uint16_t read = sizeof(CommandStatusWrapper);
   uint8_t retry = 5;
   
-  bLastUsbError = pUsb->inTransfer(bAddress, epInfo[epDataInIndex].epAddr, &read, (uint8_t*)&csw);
+  bLastUsbError = pUsb->inTransfer(bAddress, epInfo[epDataInIndex].epAddr, &read, (uint8_t*)csw);
   while(bLastUsbError == hrSTALL && retry--) {
     ClearEpHalt(epDataInIndex);
-    bLastUsbError = pUsb->inTransfer(bAddress, epInfo[epDataInIndex].epAddr, &read, (uint8_t*)&csw);
+    bLastUsbError = pUsb->inTransfer(bAddress, epInfo[epDataInIndex].epAddr, &read, (uint8_t*)csw);
   }
   if (bLastUsbError == hrSTALL) {
     ErrorMessage<uint8_t>(PSTR("Get CSW stalled. Perform Reset Recovery"), bLastUsbError);
@@ -590,19 +589,19 @@ uint8_t BulkOnly::GetStatus(uint32_t tag)
   }
 
   // Phase error?
-  if (csw.bCSWStatus == MASS_STA_PHASE_ERROR) {
+  if (csw->bCSWStatus == MASS_STA_PHASE_ERROR) {
       ErrorMessage<uint8_t>(PSTR("Phase error. Perform Reset Recovery"), bLastUsbError);
       ResetRecovery();
   }
   
-  if (csw.bCSWStatus == 2) {
+  if (csw->bCSWStatus == 1) {
 #ifdef MASS_STG_DEBUG
-  ErrorMessage<uint32_t>(PSTR("dCSWDataResidue"), csw.dCSWDataResidue);
+  ErrorMessage<uint32_t>(PSTR("dCSWDataResidue"), csw->dCSWDataResidue);
 #endif
-    RequestSense();
+    //RequestSense();
   }
   
-  return csw.bCSWStatus;
+  return csw->bCSWStatus;
 }
 
 uint8_t BulkOnly::Transaction(CommandBlockWrapper *cbw, uint16_t size, void *buf, uint8_t flags)
@@ -627,8 +626,6 @@ uint8_t BulkOnly::Transaction(CommandBlockWrapper *cbw, uint16_t size, void *buf
 	if (size && buf)
 	{
     const uint8_t	bufSize = 64;
-
-HexDumper<USBReadParser, uint16_t, uint16_t> hexDump;
 
 		// IN
 		if (cbw->bmCBWFlags & MASS_CMD_DIR_IN)
@@ -658,16 +655,14 @@ HexDumper<USBReadParser, uint16_t, uint16_t> hexDump;
           read = bufSize;
         } // if not MASS_TRANS_FLG_CALLBACK
         else {
-      #ifdef MASS_STG_DEBUG
-      hexDump.Parse(read, rbuf, count);
-      ErrorMessage<uint32_t>(PSTR("POS: "),(int)((uint8_t*)buf)+count);
-      #endif
           memcpy((((uint8_t*)buf)+count), rbuf, read); // Append to buf
           count += read;
           read = bufSize;
         }
       }
       while(count < total && bLastUsbError == hrSUCCESS);
+      
+      
       
       if (bLastUsbError && bLastUsbError != hrSTALL)
       {
@@ -693,7 +688,6 @@ HexDumper<USBReadParser, uint16_t, uint16_t> hexDump;
         bLastUsbError = pUsb->outTransfer(bAddress, epInfo[epDataOutIndex].epAddr, size, (uint8_t*)buf);
         if (bLastUsbError == hrNAK) {
           ErrorMessage<uint8_t>(PSTR("NAK"), bLastUsbError);
-          delay(1000);
         }
         else if (bLastUsbError) {
           ErrorMessage<uint8_t>(PSTR("RSP"), bLastUsbError);
@@ -721,10 +715,10 @@ HexDumper<USBReadParser, uint16_t, uint16_t> hexDump;
 		}
 	} // Receive/Send
 
-  delay(1000);
-	
 	// Separamos el get status
-	return GetStatus(cbw->dCBWTag);
+	
+	CommandStatusWrapper csw;
+	return GetStatus(cbw->dCBWTag, &csw);
 }
 
 void BulkOnly::PrintEndpointDescriptor( const USB_ENDPOINT_DESCRIPTOR* ep_ptr )

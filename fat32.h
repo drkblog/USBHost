@@ -25,6 +25,9 @@ Circuits At Home, LTD (http://www.circuitsathome.com)
 #include <max3421e.h>
 #include <Usb.h>
 #include <masstorage.h>
+
+#define FAT32_DEBUG 1
+
 #include <fat32structs.h>
 
 #define FAT32_ERR_SUCCESS   0x00
@@ -37,11 +40,10 @@ class FAT32
 private:
   BulkOnly * bulk;
   
-  fat32_boot_t * bootsec;
   uint8_t sub_error;
   
 public:
-  FAT32(BulkOnly  * bulk) : bulk(bulk), sub_error(0), bootsec(0) {};
+  FAT32(BulkOnly  * bulk) : bulk(bulk), sub_error(0) {};
   ~FAT32();
   uint8_t Init();
   void dump();

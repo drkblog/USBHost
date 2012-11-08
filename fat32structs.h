@@ -19,7 +19,7 @@ e-mail   :  drkbugs@gmail.com
 Circuits At Home, LTD (http://www.circuitsathome.com)
 */
 
-// This file has been taken from Arduino SdFat Library 
+// This file has been taken and changed from Arduino SdFat Library 
 // Copyright (C) 2012 by William Greiman
 
 /** Value for byte 510 of boot block or MBR */
@@ -115,134 +115,6 @@ struct masterBootRecord {
 typedef struct masterBootRecord mbr_t;
 //------------------------------------------------------------------------------
 /**
- * \struct fat_boot
- *
- * \brief Boot sector for a FAT12/FAT16 volume.
- *
- */
-struct fat_boot {
-         /**
-          * The first three bytes of the boot sector must be valid,
-          * executable x 86-based CPU instructions. This includes a
-          * jump instruction that skips the next nonexecutable bytes.
-          */
-  uint8_t jump[3];
-         /**
-          * This is typically a string of characters that identifies
-          * the operating system that formatted the volume.
-          */
-  char    oemId[8];
-          /**
-           * The size of a hardware sector. Valid decimal values for this
-           * field are 512, 1024, 2048, and 4096. For most disks used in
-           * the United States, the value of this field is 512.
-           */
-  uint16_t bytesPerSector;
-          /**
-           * Number of sectors per allocation unit. This value must be a
-           * power of 2 that is greater than 0. The legal values are
-           * 1, 2, 4, 8, 16, 32, 64, and 128.  128 should be avoided.
-           */
-  uint8_t  sectorsPerCluster;
-          /**
-           * The number of sectors preceding the start of the first FAT,
-           * including the boot sector. The value of this field is always 1.
-           */
-  uint16_t reservedSectorCount;
-          /**
-           * The number of copies of the FAT on the volume.
-           * The value of this field is always 2.
-           */
-  uint8_t  fatCount;
-          /**
-           * For FAT12 and FAT16 volumes, this field contains the count of
-           * 32-byte directory entries in the root directory. For FAT32 volumes,
-           * this field must be set to 0. For FAT12 and FAT16 volumes, this
-           * value should always specify a count that when multiplied by 32
-           * results in a multiple of bytesPerSector.  FAT16 volumes should
-           * use the value 512.
-           */
-  uint16_t rootDirEntryCount;
-          /**
-           * This field is the old 16-bit total count of sectors on the volume.
-           * This count includes the count of all sectors in all four regions
-           * of the volume. This field can be 0; if it is 0, then totalSectors32
-           * must be nonzero.  For FAT32 volumes, this field must be 0. For
-           * FAT12 and FAT16 volumes, this field contains the sector count, and
-           * totalSectors32 is 0 if the total sector count fits
-           * (is less than 0x10000).
-           */
-  uint16_t totalSectors16;
-          /**
-           * This dates back to the old MS-DOS 1.x media determination and is
-           * no longer usually used for anything.  0xF8 is the standard value
-           * for fixed (nonremovable) media. For removable media, 0xF0 is
-           * frequently used. Legal values are 0xF0 or 0xF8-0xFF.
-           */
-  uint8_t  mediaType;
-          /**
-           * Count of sectors occupied by one FAT on FAT12/FAT16 volumes.
-           * On FAT32 volumes this field must be 0, and sectorsPerFat32
-           * contains the FAT size count.
-           */
-  uint16_t sectorsPerFat16;
-           /** Sectors per track for interrupt 0x13. Not used otherwise. */
-  uint16_t sectorsPerTrack;
-           /** Number of heads for interrupt 0x13.  Not used otherwise. */
-  uint16_t headCount;
-          /**
-           * Count of hidden sectors preceding the partition that contains this
-           * FAT volume. This field is generally only relevant for media
-           * visible on interrupt 0x13.
-           */
-  uint32_t hidddenSectors;
-          /**
-           * This field is the new 32-bit total count of sectors on the volume.
-           * This count includes the count of all sectors in all four regions
-           * of the volume.  This field can be 0; if it is 0, then
-           * totalSectors16 must be nonzero.
-           */
-  uint32_t totalSectors32;
-           /**
-            * Related to the BIOS physical drive number. Floppy drives are
-            * identified as 0x00 and physical hard disks are identified as
-            * 0x80, regardless of the number of physical disk drives.
-            * Typically, this value is set prior to issuing an INT 13h BIOS
-            * call to specify the device to access. The value is only
-            * relevant if the device is a boot device.
-            */
-  uint8_t  driveNumber;
-           /** used by Windows NT - should be zero for FAT */
-  uint8_t  reserved1;
-           /** 0X29 if next three fields are valid */
-  uint8_t  bootSignature;
-           /**
-            * A random serial number created when formatting a disk,
-            * which helps to distinguish between disks.
-            * Usually generated by combining date and time.
-            */
-  uint32_t volumeSerialNumber;
-           /**
-            * A field once used to store the volume label. The volume label
-            * is now stored as a special file in the root directory.
-            */
-  char     volumeLabel[11];
-           /**
-            * A field with a value of either FAT, FAT12 or FAT16,
-            * depending on the disk format.
-            */
-  char     fileSystemType[8];
-           /** X86 boot code */
-  uint8_t  bootCode[448];
-           /** must be 0X55 */
-  uint8_t  bootSectorSig0;
-           /** must be 0XAA */
-  uint8_t  bootSectorSig1;
-};
-/** Type name for FAT Boot Sector */
-typedef struct fat_boot fat_boot_t;
-//------------------------------------------------------------------------------
-/**
  * \struct fat32_boot
  *
  * \brief Boot sector for a FAT32 volume.
@@ -281,7 +153,7 @@ struct fat32_boot {
            * The number of copies of the FAT on the volume.
            * The value of this field is always 2.
            */
-  uint8_t  fatCount;
+  uint8_t  fatCount;//16
           /**
            * FAT12/FAT16 only. For FAT32 volumes, this field must be set to 0.
            */
@@ -395,6 +267,51 @@ struct fat32_boot {
 };
 /** Type name for FAT32 Boot Sector */
 typedef struct fat32_boot fat32_boot_t;
+
+class FAT32BootSectorParser : public USBReadParser
+{
+public:
+  uint8_t valid : 1;
+  uint8_t reserved : 7;
+  uint16_t bytesPerSector;
+  uint8_t sectorsPerCluster;
+  uint16_t reservedSectorCount;
+  uint32_t totalSectors32;
+  uint32_t sectorsPerFat32;
+  uint16_t fat32Flags;
+  
+public:
+  FAT32BootSectorParser() : valid(0), bytesPerSector() { };
+	virtual void Parse(const uint16_t len, const uint8_t *pbuf, const uint16_t &offset) {
+	  uint16_t i;
+	  for(i = 0; i<len; i++) {
+	    if (offset+i == 11) bytesPerSector = *(pbuf+i);
+	    if (offset+i == 12) bytesPerSector |= *(pbuf+i) << 8;
+	    if (offset+i == 13) sectorsPerCluster = *(pbuf+i);
+	    if (offset+i == 14) reservedSectorCount = *(pbuf+i);
+	    if (offset+i == 15) reservedSectorCount |= *(pbuf+i) << 8;
+	    if (offset+i == 32) totalSectors32 = *(pbuf+i);
+	    if (offset+i == 33) totalSectors32 |= *(pbuf+i) << 8;
+	    if (offset+i == 34) totalSectors32 |= *(pbuf+i) << 16;
+	    if (offset+i == 35) totalSectors32 |= *(pbuf+i) << 24;
+	    if (offset+i == 36) sectorsPerFat32 = *(pbuf+i);
+	    if (offset+i == 37) sectorsPerFat32 |= *(pbuf+i) << 8;
+	    if (offset+i == 38) sectorsPerFat32 |= *(pbuf+i) << 16;
+	    if (offset+i == 39) sectorsPerFat32 |= *(pbuf+i) << 24;
+	    if (offset+i == 40) fat32Flags = *(pbuf+i);
+	    if (offset+i == 41) fat32Flags |= *(pbuf+i) << 8;
+	    if (offset+i == 510) valid = *(pbuf+i) == 0x55;
+	    if (offset+i == 511) valid = valid && (*(pbuf+i)) == 0xAA;
+	    // DEBUG
+      #ifdef FAT32_DEBUG
+	    if (offset+i == 3) Serial.print("OEMID: ");
+	    if (offset+i >= 3 && offset+i <=10) Serial.print((char)*(pbuf+i));
+	    if (offset+i == 10) Serial.println("");
+	    #endif
+	  }
+	};
+};
+
 //------------------------------------------------------------------------------
 /** Lead signature for a FSINFO sector */
 uint32_t const FSINFO_LEAD_SIG = 0x41615252;
