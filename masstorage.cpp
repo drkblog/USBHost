@@ -634,6 +634,7 @@ uint8_t BulkOnly::Transaction(CommandBlockWrapper *cbw, uint16_t size, void *buf
       uint16_t		count	= 0;
       uint8_t			rbuf[bufSize];
       uint16_t read;
+      uint8_t abort = 0;
 
 #ifdef MASS_STG_DEBUG
       ErrorMessage<uint16_t>(PSTR("IN will read"), size);
@@ -660,7 +661,7 @@ uint8_t BulkOnly::Transaction(CommandBlockWrapper *cbw, uint16_t size, void *buf
           read = bufSize;
         }
       }
-      while(count < total && bLastUsbError == hrSUCCESS);
+      while(!abort && count < total && bLastUsbError == hrSUCCESS);
       
       
       

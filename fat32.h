@@ -39,14 +39,17 @@ class FAT32
 {
 private:
   BulkOnly * bulk;
-  
+  FAT32BootSectorParser bootp;
   uint8_t sub_error;
   
 public:
   FAT32(BulkOnly  * bulk) : bulk(bulk), sub_error(0) {};
   ~FAT32();
   uint8_t Init();
+  uint32_t nextCluster(uint32_t active_cluster);
+  void cat(uint32_t cluster);
   void dump();
+  void ls();
   
   uint8_t GetSubError() { return sub_error; };
 };

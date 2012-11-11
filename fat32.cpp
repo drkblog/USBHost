@@ -4,7 +4,6 @@ uint8_t FAT32::Init()
 {
   uint8_t r;
   
-  FAT32BootSectorParser bootp;
  
   // Read MBR
   r = bulk->Read(0, sizeof(fat32_boot_t), (uint8_t*)&bootp, 1);
@@ -28,13 +27,60 @@ uint8_t FAT32::Init()
     Serial.println(bootp.totalSectors32);
     Serial.print("FAT sectors: ");
     Serial.println(bootp.sectorsPerFat32);
+    Serial.print("Cluster of the ROOT directory: ");
+    Serial.println(bootp.fat32RootCluster);
+    Serial.print("FSInfo sector: ");
+    Serial.println(bootp.fat32FSInfo);
   
+    ls();
+    cat(3);
 
   return FAT32_ERR_SUCCESS;
 }
 
 FAT32::~FAT32()
 {
+}
+
+uint32_t FAT32::nextCluster(uint32_t active_cluster)
+{
+  uint32_t fat_offset = active_cluster * 4;
+  uint32_t fat_sector = bootp.reservedSectorCount + (fat_offset / bootp.bytesPerSector);
+  FAT32FATSectorParser sp(fat_offset % bootp.bytesPerSector);
+  uint8_t r = bulk->Read(fat_sector, bootp.bytesPerSector, (uint8_t*)&sp, 1);
+  if (r)
+    return 0;
+  
+  return sp.value; 
+}
+
+void FAT32::cat(uint32_t cluster)
+{
+  FAT32FileParser fp(5706);
+  
+  do {
+    if (cluster != 0x0FFFFFF7)
+      bulk->Read(bootp.firstDataSector + bootp.sectorsPerCluster*(cluster-2), bootp.sectorsPerCluster*512, (uint8_t*)&fp, 1);
+    cluster = nextCluster(cluster);
+  } while(!fp.done && cluster < 0x0FFFFFF8 && cluster);
+  
+}
+
+
+void FAT32::ls()
+{
+  FAT32DirEntParser p;
+  
+  //HexDumper<USBReadParser, uint16_t, uint16_t>		HexDump;
+  uint32_t cluster = 0;
+  do {
+    if (cluster != 0x0FFFFFF7)
+      bulk->Read(bootp.firstDataSector + bootp.sectorsPerCluster*(bootp.fat32RootCluster+cluster-2), bootp.sectorsPerCluster*512, (uint8_t*)&p, 1);
+    cluster = nextCluster(cluster);
+  } while(!p.abort && cluster < 0x0FFFFFF8 && cluster);
+  
+  Serial.println("DONE");
+  
 }
 
 void FAT32::dump()
