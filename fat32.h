@@ -55,10 +55,10 @@ public:
   FAT32(BulkOnly  * bulk) : bulk(bulk), sub_error(0) {};
   ~FAT32();
   uint8_t Init();
-  void cat(uint32_t cluster);
+  void cat(uint32_t cluster, uint32_t size);
   void dump();
   void ls(FAT32DirectoryCB &cb, uint32_t cluster = 0);
-  uint32_t find(const char * name);
+  uint32_t find(const char * name, uint32_t &size);
   
   uint8_t GetSubError() { return sub_error; };
 };

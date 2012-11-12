@@ -52,9 +52,9 @@ uint32_t FAT32::nextCluster(uint32_t active_cluster)
   return sp.value; 
 }
 
-void FAT32::cat(uint32_t cluster)
+void FAT32::cat(uint32_t cluster, uint32_t size)
 {
-  FAT32FileParser fp(5706);
+  FAT32FileParser fp(size);
   
   do {
     if (cluster != 0x0FFFFFF7)
@@ -81,6 +81,7 @@ class FindFileCB : public FAT32DirectoryCB
   const char * file;
 public:
   uint32_t cluster;
+  uint32_t size;
 public:
   FindFileCB(const char * f) : file(f), cluster(0) {};
   virtual uint8_t foundEntry(const FAT32DirEntParser &entry) {
@@ -92,16 +93,18 @@ public:
     if (found) {
       cluster = entry.firstClusterHigh << 16;
       cluster |= entry.firstClusterLow;
+      size = entry.fileSize;
       return 1; // abort
     }
   };
 };
 
 
-uint32_t FAT32::find(const char * name)
+uint32_t FAT32::find(const char * name, uint32_t &size)
 {
   FindFileCB cb(name);
   ls(cb, 0);
+  size = cb.size;
   return cb.cluster;
 }
 
@@ -157,14 +160,15 @@ void FAT32::dump()
 
 // Utility and parsers
 void FAT32DirEntParser::Parse(const uint16_t len, const uint8_t *pbuf, const uint16_t &offset) {
-  uint16_t i;
-  uint8_t sos = offset % 32;
+  uint16_t i, j;
   
   if (abort)
     return;
   
   for(i = 0; i<len; i++) {
-    if (sos+i == 0) {
+    uint8_t ep = (offset + i) % 32; // Entry position
+    
+    if (ep == 0) {
       ignore = *(pbuf+i) == DIR_NAME_DELETED;
       #ifdef FAT32_DEBUG
       if (ignore)
@@ -179,8 +183,8 @@ void FAT32DirEntParser::Parse(const uint16_t len, const uint8_t *pbuf, const uin
     }
     
     if (!ignore) {
-      if (sos+i >= 0 && offset+i <=10) name[sos+i] = ((char)*(pbuf+i));
-      if (sos+i == 11) {
+      if (ep >= 0 && ep <=10) name[ep] = ((char)*(pbuf+i));
+      if (ep == 11) {
         attributes = *(pbuf+i);
         ignore = attributes == DIR_ATT_LONG_NAME; // Long entry will be ignored
         #ifdef FAT32_DEBUG
@@ -198,26 +202,26 @@ void FAT32DirEntParser::Parse(const uint16_t len, const uint8_t *pbuf, const uin
         #endif
         
       }
-      if (sos+i == 20) firstClusterHigh = *(pbuf+i);
-      if (sos+i == 21) firstClusterHigh |= *(pbuf+i) << 8;
-      if (sos+i == 26) firstClusterLow = *(pbuf+i);
-      if (sos+i == 27) firstClusterLow |= *(pbuf+i) << 8;
-      if (sos+i == 28) fileSize = *(pbuf+i);
-      if (sos+i == 29) fileSize |= *(pbuf+i) << 8;
-      if (sos+i == 30) fileSize |= *(pbuf+i) << 16;
-      if (sos+i == 31) fileSize |= *(pbuf+i) << 24;
+      if (ep == 20) firstClusterHigh = *(pbuf+i);
+      if (ep == 21) firstClusterHigh |= *(pbuf+i) << 8;
+      if (ep == 26) firstClusterLow = *(pbuf+i);
+      if (ep == 27) firstClusterLow |= *(pbuf+i) << 8;
+      if (ep == 28) fileSize = *(pbuf+i);
+      if (ep == 29) fileSize |= *(pbuf+i) << 8;
+      if (ep == 30) fileSize |= *(pbuf+i) << 16;
+      if (ep == 31) fileSize |= *(pbuf+i) << 24;
       
       // Notify
-      if (sos+i == 31) {
+      if (ep == 31) {
         abort = cb.foundEntry(*this);
       }
       
       // DEBUG
       #ifdef FAT32_DEBUG
-      if (sos+i == 0) Serial.print("Name: ");
-      if (sos+i >= 0 && sos+i <=10) Serial.print((char)*(pbuf+i));
-      if (sos+i == 10) Serial.println("");
-      if (sos+i == 31) {
+      if (ep == 0) Serial.print("Name: ");
+      if (ep >= 0 && ep <=10) Serial.print((char)*(pbuf+i));
+      if (ep == 10) Serial.println("");
+      if (ep == 31) {
         Serial.print("FC: ");
         Serial.print(firstClusterHigh);
         Serial.println(firstClusterLow);
@@ -225,8 +229,8 @@ void FAT32DirEntParser::Parse(const uint16_t len, const uint8_t *pbuf, const uin
         Serial.print(fileSize);
       }
       #endif
-    }
-  }
+    } // for i
+  } 
 }
   
 
