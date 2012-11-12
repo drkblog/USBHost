@@ -94,21 +94,37 @@ void PrintAllDescriptors(UsbDevice *pdev)
     PrintDescriptors( pdev->address );
 }
 
+class myDirCB : public FAT32DirectoryCB
+{
+public:
+  virtual uint8_t foundEntry(const FAT32DirEntParser &entry) {
+    Serial.print("File: ");
+    for(uint8_t i=0; i<10; i++)
+      Serial.print((char)entry.name[i]);
+    Serial.println((char)entry.name[10]);
+    Serial.print("Size: ");
+    Serial.print(entry.fileSize);
+  };
+};
+
 void loop()
 {
   Usb.Task();
   
   if( Usb.getUsbTaskState() == USB_STATE_RUNNING )
   {  
-        
+    myDirCB cb;
+    
     Serial.println("FAT32 Init");
     uint8_t r = fat.Init();
     if (r) {
       Serial.print("Failed: ");
       Serial.println(r);
     }
-    else
-      fat.dump();
+    else {
+      //fat.ls(cb, 0);
+      Serial.println(fat.find("SAMPLE  TXT"));
+    }
       
     delay( 3000 ); 
   }    
