@@ -26,7 +26,7 @@ Circuits At Home, LTD (http://www.circuitsathome.com)
 #include <Usb.h>
 #include <masstorage.h>
 
-#define FAT32_DEBUG 1
+//#define FAT32_DEBUG 1
 
 #include <fat32structs.h>
 
@@ -35,21 +35,30 @@ Circuits At Home, LTD (http://www.circuitsathome.com)
 #define FAT32_ERR_NOT_FAT32 0x02
 #define FAT32_ERR_NOT_ENOUGH_MEMORY 0x03
 
+class FAT32DirectoryCB
+{
+public:
+  virtual uint8_t foundEntry(const FAT32DirEntParser &entry) = 0;
+};
+
 class FAT32
 {
 private:
   BulkOnly * bulk;
   FAT32BootSectorParser bootp;
   uint8_t sub_error;
+
+protected:
+  uint32_t nextCluster(uint32_t active_cluster);
   
 public:
   FAT32(BulkOnly  * bulk) : bulk(bulk), sub_error(0) {};
   ~FAT32();
   uint8_t Init();
-  uint32_t nextCluster(uint32_t active_cluster);
   void cat(uint32_t cluster);
   void dump();
-  void ls();
+  void ls(FAT32DirectoryCB &cb, uint32_t cluster = 0);
+  uint32_t find(const char * name);
   
   uint8_t GetSubError() { return sub_error; };
 };

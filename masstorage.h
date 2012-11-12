@@ -44,8 +44,7 @@ Circuits At Home, LTD (http://www.circuitsathome.com)
 
 #include "confdescparser.h"
 
-#define MASS_STG_DEBUG 1
-
+//#define MASS_STG_DEBUG 1
 
 #define SWAP(a, b) (((a) ^= (b)), ((b) ^= (a)), ((a) ^= (b)))
 

@@ -492,6 +492,7 @@ uint8_t const DIR_ATT_LONG_NAME_MASK = 0X3F;
 /** defined attribute bits */
 uint8_t const DIR_ATT_DEFINED_BITS = 0X3F;
 
+class FAT32DirectoryCB;
 class FAT32DirEntParser : public USBReadParser
 {
 public:
@@ -503,75 +504,11 @@ public:
   uint8_t ignore : 1;
   uint8_t abort : 1;
   uint8_t reserved : 6;
-  
+protected:
+  FAT32DirectoryCB &cb;
 public:
-  FAT32DirEntParser() : attributes(0), ignore(0), abort(0) { };
-	virtual void Parse(const uint16_t len, const uint8_t *pbuf, const uint16_t &offset) {
-	  uint16_t i;
-	  uint8_t sos = offset % 32;
-	  
-	  if (abort)
-	    return;
-	  
-	  for(i = 0; i<len; i++) {
-	    if (sos+i == 0) {
-	      ignore = *(pbuf+i) == DIR_NAME_DELETED;
-        #ifdef FAT32_DEBUG
-        if (ignore)
-          Serial.println("DirEntry ignored.");
-        #endif
-	      if (*(pbuf+i) == DIR_NAME_FREE) {
-	        abort = ignore = 1;
-	        #ifdef FAT32_DEBUG
-	        Serial.println("DirEntry finished.");
-	        #endif
-	      }
-	    }
-	    
-	    if (!ignore) {
-        if (sos+i >= 0 && offset+i <=10) name[sos+i] = ((char)*(pbuf+i));
-        if (sos+i == 11) {
-          attributes = *(pbuf+i);
-          ignore = attributes == DIR_ATT_LONG_NAME; // Long entry will be ignored
-	        #ifdef FAT32_DEBUG
-          if  (((attributes & DIR_ATT_LONG_NAME_MASK) != DIR_ATT_LONG_NAME) && (name[0] != DIR_NAME_DELETED))
-          {
-            if ((attributes & (DIR_ATT_DIRECTORY | DIR_ATT_VOLUME_ID)) == 0x00)
-              Serial.println("Found a file.");
-            else if ((attributes & (DIR_ATT_DIRECTORY | DIR_ATT_VOLUME_ID)) == DIR_ATT_DIRECTORY)
-              Serial.println("Found a directory.");
-            else if ((attributes & (DIR_ATT_DIRECTORY | DIR_ATT_VOLUME_ID)) == DIR_ATT_VOLUME_ID)
-              Serial.println("Found a volume label.");
-            else
-              Serial.println("Found an invalid directory entry.");
-          }
-	        #endif
-          
-        }
-        if (sos+i == 20) firstClusterHigh = *(pbuf+i);
-        if (sos+i == 21) firstClusterHigh |= *(pbuf+i) << 8;
-        if (sos+i == 26) firstClusterLow = *(pbuf+i);
-        if (sos+i == 27) firstClusterLow |= *(pbuf+i) << 8;
-        if (sos+i == 28) fileSize = *(pbuf+i);
-        if (sos+i == 29) fileSize |= *(pbuf+i) << 8;
-        if (sos+i == 30) fileSize |= *(pbuf+i) << 16;
-        if (sos+i == 31) fileSize |= *(pbuf+i) << 24;
-        // DEBUG
-        #ifdef FAT32_DEBUG
-        if (sos+i == 0) Serial.print("Name: ");
-        if (sos+i >= 0 && sos+i <=10) Serial.print((char)*(pbuf+i));
-        if (sos+i == 10) Serial.println("");
-        if (sos+i == 31) {
-          Serial.print("FC: ");
-          Serial.print(firstClusterHigh);
-          Serial.println(firstClusterLow);
-          Serial.print("Size: ");
-          Serial.print(fileSize);
-        }
-        #endif
-      }
-	  }
-	};
+  FAT32DirEntParser(FAT32DirectoryCB &cb) : cb(cb), attributes(0), ignore(0), abort(0) { };
+	virtual void Parse(const uint16_t len, const uint8_t *pbuf, const uint16_t &offset); // Defined in fat32.cpp
 };
 
 class FAT32FATSectorParser : public USBReadParser
