@@ -103,7 +103,7 @@ public:
       Serial.print((char)entry.name[i]);
     Serial.println((char)entry.name[10]);
     Serial.print("Size: ");
-    Serial.print(entry.fileSize);
+    Serial.println(entry.fileSize);
   };
 };
 
@@ -122,8 +122,10 @@ void loop()
       Serial.println(r);
     }
     else {
-      //fat.ls(cb, 0);
-      Serial.println(fat.find("SAMPLE  TXT"));
+      fat.ls(cb, 0);
+      uint32_t size = 0;
+      uint32_t c = fat.find("SAMPLE  TXT", size);
+      fat.cat(c, size);
     }
       
     delay( 3000 ); 
