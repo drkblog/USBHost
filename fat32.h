@@ -26,7 +26,7 @@ Circuits At Home, LTD (http://www.circuitsathome.com)
 #include <Usb.h>
 #include <masstorage.h>
 
-//#define FAT32_DEBUG 1
+#define FAT32_DEBUG 1
 
 #include <fat32structs.h>
 
@@ -37,6 +37,7 @@ Circuits At Home, LTD (http://www.circuitsathome.com)
 #define FAT32_ERR_INVALID_ARGUMENT 0x04
 #define FAT32_ERR_FP_BEFORE_FILE 0x05
 #define FAT32_ERR_READ_EOF 0x06
+#define FAT32_ERR_FILENOTFOUND 0x07
 
 #define SEEK_SET 0x00
 #define SEEK_CUR 0x01

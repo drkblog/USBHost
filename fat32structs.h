@@ -571,20 +571,24 @@ public:
   uint8_t reserved : 7;
   uint16_t size;
   uint16_t position;
+  uint16_t left;
   uint8_t * buffer;
   
 public:
-  FAT32FileToBufferParser(uint16_t position, uint16_t size, uint8_t * buffer) : position(position), buffer(buffer), size(size) { };
+  FAT32FileToBufferParser(uint16_t position, uint16_t size, uint8_t * buffer) : done(0), position(position), buffer(buffer), size(size), left(size) { };
+  void resetTo(uint16_t position) { buffer+=(size-left); this->position = position; size = left; };
 	virtual void Parse(const uint16_t len, const uint8_t *pbuf, const uint16_t &offset) {
 	  if (done)
 	    return;
-	  
+
 	  uint16_t i;
 	  if (offset + len >= position)
       for(i = 0; i<len; i++) {
-        if (offset + i >= position && offset + i < position + size)
+        if (offset + i >= position && offset + i < position + size) {
           buffer[i - (position - offset)] = pbuf[i];
-        if (offset + i >= position + size)
+          --left;
+        }
+        if (!left)
           done = 1;
       }
 	}

@@ -95,6 +95,7 @@ public:
       size = entry.fileSize;
       return 1; // abort
     }
+    return 0; // go on...
   };
 };
 
@@ -114,18 +115,29 @@ uint32_t FAT32::findClusterN(uint32_t first, uint32_t n)
     found = nextCluster(found);
     ++c;
   }
+  #ifdef FAT32_DEBUG
+  Serial.print("Cluster #");
+  Serial.print(n);
+  Serial.print(" is at ");
+  Serial.println(found);
+  #endif
   return found;
 }
 
 uint8_t FAT32::parseCluster(uint32_t cluster, USBReadParser * parser)
 {
-  sub_error = bulk->Read(bootp.firstDataSector + bootp.sectorsPerCluster*(cluster-2), bootp.sectorsPerCluster*bootp.bytesPerSector, (uint8_t*)&parser, 1);
+  sub_error = bulk->Read(bootp.firstDataSector + bootp.sectorsPerCluster*(cluster-2), bootp.sectorsPerCluster*bootp.bytesPerSector, (uint8_t*)parser, 1);
   return (sub_error)?FAT32_ERR_LOW_LEVEL:FAT32_ERR_SUCCESS;
 }
 
 FAT32File * FAT32::open(const char * name)
 {
-  return new FAT32File(*this, 0, 0);
+  uint32_t s;
+  uint32_t c = find(name, s);
+  if (c)
+    return new FAT32File(*this, c, s);
+  else
+    return NULL;
 }
 void FAT32::close(FAT32File * &file)
 {
@@ -140,14 +152,30 @@ uint16_t FAT32File::read(void * buf, uint16_t count)
 {
   if (fp + count >= size)
     return FAT32_ERR_READ_EOF;
-  uint32_t cluster_number = fp / (fat.bootp.sectorsPerCluster * fat.bootp.bytesPerSector);
+  
+  uint32_t cluster = 0;
+  {
+    uint32_t cluster_number = fp / (fat.bootp.sectorsPerCluster * fat.bootp.bytesPerSector);
+    cluster = fat.findClusterN(this->cluster, cluster_number);
+  }
+
+  uint32_t pfp = fp;
+  {
   FAT32FileToBufferParser f2b(fp % (fat.bootp.sectorsPerCluster * fat.bootp.bytesPerSector), count, (uint8_t*)buf);
-  uint8_t r = fat.parseCluster(fat.findClusterN(this->cluster, cluster_number), &f2b);
-  // TODO: span over clusters
-  if (r)
-    return r;
-  fp += count;
-  return FAT32_ERR_SUCCESS;
+  do {
+    uint8_t r = fat.parseCluster(cluster, &f2b);
+    fp += count - f2b.left;
+    
+    if (f2b.left) {
+      f2b.resetTo(fp % (fat.bootp.sectorsPerCluster * fat.bootp.bytesPerSector)); // For next loop
+    }
+    if (r)
+      return r;
+  }
+  while(!f2b.done && (cluster = fat.nextCluster(cluster)) != FAT32_EOC); // bytes left and not end of chain
+  }
+  
+  return fp-pfp; // bytes read
 }
 
 uint8_t FAT32File::seek(uint32_t offset, uint8_t whence)
@@ -238,7 +266,7 @@ void FAT32DirEntParser::Parse(const uint16_t len, const uint8_t *pbuf, const uin
       if (*(pbuf+i) == DIR_NAME_FREE) {
         abort = ignore = 1;
         #ifdef FAT32_DEBUG
-        Serial.println("DirEntry finished.");
+        Serial.println("DirEntry listing finished.");
         #endif
       }
     }
@@ -275,6 +303,10 @@ void FAT32DirEntParser::Parse(const uint16_t len, const uint8_t *pbuf, const uin
       // Notify
       if (ep == 31) {
         abort = cb.foundEntry(*this);
+        #ifdef FAT32_DEBUG
+        if (abort)
+          Serial.println("DirEntry listing finished by callback.");
+        #endif
       }
       
       // DEBUG
@@ -287,7 +319,7 @@ void FAT32DirEntParser::Parse(const uint16_t len, const uint8_t *pbuf, const uin
         Serial.print(firstClusterHigh);
         Serial.println(firstClusterLow);
         Serial.print("Size: ");
-        Serial.print(fileSize);
+        Serial.println(fileSize);
       }
       #endif
     } // for i
