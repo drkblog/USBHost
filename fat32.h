@@ -34,11 +34,39 @@ Circuits At Home, LTD (http://www.circuitsathome.com)
 #define FAT32_ERR_LOW_LEVEL 0x01
 #define FAT32_ERR_NOT_FAT32 0x02
 #define FAT32_ERR_NOT_ENOUGH_MEMORY 0x03
+#define FAT32_ERR_INVALID_ARGUMENT 0x04
+#define FAT32_ERR_FP_BEFORE_FILE 0x05
+#define FAT32_ERR_READ_EOF 0x06
+
+#define SEEK_SET 0x00
+#define SEEK_CUR 0x01
+#define SEEK_END 0x02
+
+#define FAT32_EOC 0x0FFFFFF8
+#define FAT32_BAD 0x0FFFFFF7
 
 class FAT32DirectoryCB
 {
 public:
   virtual uint8_t foundEntry(const FAT32DirEntParser &entry) = 0;
+};
+
+class FAT32;
+
+class FAT32File
+{
+protected:
+  FAT32 &fat;
+  uint32_t cluster;
+  uint32_t size;
+  uint32_t fp;
+  FAT32File(FAT32 &f, uint32_t c, uint32_t s) : fat(f), cluster(c), size(s), fp(0) {};
+  ~FAT32File() {};
+public:
+  uint8_t seek(uint32_t offset, uint8_t whence);
+  uint16_t read(void *buf, uint16_t count);
+  
+  friend class FAT32;
 };
 
 class FAT32
@@ -55,12 +83,17 @@ public:
   FAT32(BulkOnly  * bulk) : bulk(bulk), sub_error(0) {};
   ~FAT32();
   uint8_t Init();
-  void cat(uint32_t cluster, uint32_t size);
-  void dump();
   void ls(FAT32DirectoryCB &cb, uint32_t cluster = 0);
   uint32_t find(const char * name, uint32_t &size);
+  FAT32File * open(const char * name);
+  void close(FAT32File * &file);
   
+  uint8_t parseCluster(uint32_t cluster, USBReadParser * parser);
+  uint32_t findClusterN(uint32_t first, uint32_t n);
+  void fileToSerial(uint32_t cluster, uint32_t size);
   uint8_t GetSubError() { return sub_error; };
+  
+  friend class FAT32File;
 };
 
 #endif // __FAT32_H__

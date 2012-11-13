@@ -539,7 +539,7 @@ public:
 	}
 };
 
-class FAT32FileParser : public USBReadParser
+class FAT32FileToSerialParser : public USBReadParser
 {
 public:
   uint8_t done : 1;
@@ -548,7 +548,7 @@ public:
   uint32_t parsed;
   
 public:
-  FAT32FileParser(uint32_t size) : done(0), parsed(0), size(size) { };
+  FAT32FileToSerialParser(uint32_t size) : done(0), parsed(0), size(size) { };
 	virtual void Parse(const uint16_t len, const uint8_t *pbuf, const uint16_t &offset) {
 	  if (done)
 	    return;
@@ -561,6 +561,32 @@ public:
 	    else
 	      done = 1;
 	  }
+	}
+};
+
+class FAT32FileToBufferParser : public USBReadParser
+{
+public:
+  uint8_t done : 1;
+  uint8_t reserved : 7;
+  uint16_t size;
+  uint16_t position;
+  uint8_t * buffer;
+  
+public:
+  FAT32FileToBufferParser(uint16_t position, uint16_t size, uint8_t * buffer) : position(position), buffer(buffer), size(size) { };
+	virtual void Parse(const uint16_t len, const uint8_t *pbuf, const uint16_t &offset) {
+	  if (done)
+	    return;
+	  
+	  uint16_t i;
+	  if (offset + len >= position)
+      for(i = 0; i<len; i++) {
+        if (offset + i >= position && offset + i < position + size)
+          buffer[i - (position - offset)] = pbuf[i];
+        if (offset + i >= position + size)
+          done = 1;
+      }
 	}
 };
 

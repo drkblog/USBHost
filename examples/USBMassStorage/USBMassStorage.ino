@@ -125,7 +125,10 @@ void loop()
       fat.ls(cb, 0);
       uint32_t size = 0;
       uint32_t c = fat.find("SAMPLE  TXT", size);
-      fat.cat(c, size);
+      fat.fileToSerial(c, size);
+      
+      FAT32File * f = fat.open("SAMPLE  TXT");
+      fat.close(f);
     }
       
     delay( 3000 ); 

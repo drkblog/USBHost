@@ -52,28 +52,27 @@ uint32_t FAT32::nextCluster(uint32_t active_cluster)
   return sp.value; 
 }
 
-void FAT32::cat(uint32_t cluster, uint32_t size)
+void FAT32::fileToSerial(uint32_t cluster, uint32_t size)
 {
-  FAT32FileParser fp(size);
+  FAT32FileToSerialParser fp(size);
   
   do {
-    if (cluster != 0x0FFFFFF7)
+    if (cluster != FAT32_BAD)
       bulk->Read(bootp.firstDataSector + bootp.sectorsPerCluster*(cluster-2), bootp.sectorsPerCluster*512, (uint8_t*)&fp, 1);
     cluster = nextCluster(cluster);
-  } while(!fp.done && cluster < 0x0FFFFFF8 && cluster);
+  } while(!fp.done && cluster < FAT32_EOC && cluster);
   
 }
-
 
 void FAT32::ls(FAT32DirectoryCB &cb, uint32_t cluster)
 {
   FAT32DirEntParser p(cb);
   
   do {
-    if (cluster != 0x0FFFFFF7)
+    if (cluster != FAT32_BAD)
       bulk->Read(bootp.firstDataSector + bootp.sectorsPerCluster*(bootp.fat32RootCluster+cluster-2), bootp.sectorsPerCluster*512, (uint8_t*)&p, 1);
     cluster = nextCluster(cluster);
-  } while(!p.abort && cluster < 0x0FFFFFF8 && cluster);
+  } while(!p.abort && cluster < FAT32_EOC && cluster);
 }
 
 class FindFileCB : public FAT32DirectoryCB
@@ -99,7 +98,6 @@ public:
   };
 };
 
-
 uint32_t FAT32::find(const char * name, uint32_t &size)
 {
   FindFileCB cb(name);
@@ -108,55 +106,118 @@ uint32_t FAT32::find(const char * name, uint32_t &size)
   return cb.cluster;
 }
 
-void FAT32::dump()
+uint32_t FAT32::findClusterN(uint32_t first, uint32_t n)
 {
-  /*
-  if (bootsec->bootSignature == EXTENDED_BOOT_SIG) {
-    Serial.print("Volume serial number: ");
-    Serial.println(bootsec->volumeSerialNumber);
-    Serial.print("Volume label: ");
-    Serial.println(bootsec->volumeLabel);
-    Serial.print("Type: ");
-    Serial.println(bootsec->fileSystemType);
+  uint16_t c = 0;
+  uint32_t found = first;
+  while(n > c && found < FAT32_EOC) {
+    found = nextCluster(found);
+    ++c;
   }
-  */
-
-  /*
-  // OJO!!!
-  uint8_t block[512];
-  memset(block, 0, 512);
-  block[0] = 0x00;
-  block[1] = 0x01;
-  block[2] = 0x02;
-  block[3] = 0x03;
-  block[4] = 0x04;
-  block[5] = 0x05;
-  r = bulk->Write(0, 512, block, 0);
-  if (r) {
-    Serial.print("ERROR: ");
-    Serial.println(r);
-    const SenseData s = bulk->GetLastSenseData();
-    Serial.print("Sense: ");
-    Serial.println(s.ErrorCode);
-    Serial.println(s.AdditionalSenseCode);
-    Serial.println(s.AdditionalSenseCodeQualifier);
-  }  
-  
-  HexDumper<USBReadParser, uint16_t, uint16_t>		HexDump;
-  r = bulk->Read(0, 512, (uint8_t*)&HexDump, 1);
-  if (r) {
-    Serial.print("ERROR: ");
-    Serial.println(r);
-    const SenseData s = bulk->GetLastSenseData();
-    Serial.println("Sense");
-    Serial.println(s.Valid);
-    Serial.println((uint32_t)s.Information);
-    Serial.println(s.SenseKey);
-    Serial.println(s.AdditionalSenseCode);
-    Serial.println(s.AdditionalSenseCodeQualifier);
-  }
-  */
+  return found;
 }
+
+uint8_t FAT32::parseCluster(uint32_t cluster, USBReadParser * parser)
+{
+  sub_error = bulk->Read(bootp.firstDataSector + bootp.sectorsPerCluster*(cluster-2), bootp.sectorsPerCluster*bootp.bytesPerSector, (uint8_t*)&parser, 1);
+  return (sub_error)?FAT32_ERR_LOW_LEVEL:FAT32_ERR_SUCCESS;
+}
+
+FAT32File * FAT32::open(const char * name)
+{
+  return new FAT32File(*this, 0, 0);
+}
+void FAT32::close(FAT32File * &file)
+{
+  delete file;
+  file = NULL;
+}
+
+/////////////////////////////
+// FAT32File
+
+uint16_t FAT32File::read(void * buf, uint16_t count)
+{
+  if (fp + count >= size)
+    return FAT32_ERR_READ_EOF;
+  uint32_t cluster_number = fp / (fat.bootp.sectorsPerCluster * fat.bootp.bytesPerSector);
+  FAT32FileToBufferParser f2b(fp % (fat.bootp.sectorsPerCluster * fat.bootp.bytesPerSector), count, (uint8_t*)buf);
+  uint8_t r = fat.parseCluster(fat.findClusterN(this->cluster, cluster_number), &f2b);
+  // TODO: span over clusters
+  if (r)
+    return r;
+  fp += count;
+  return FAT32_ERR_SUCCESS;
+}
+
+uint8_t FAT32File::seek(uint32_t offset, uint8_t whence)
+{
+  switch(whence) {
+  case SEEK_SET:
+    fp = offset;
+    break;
+  case SEEK_CUR:
+    fp += offset;
+    break;
+  case SEEK_END:
+    if (size < offset)
+      return FAT32_ERR_FP_BEFORE_FILE; // Can't go before first byte
+    fp = size-offset;
+    
+    break;
+  default:
+    return FAT32_ERR_INVALID_ARGUMENT;
+  }
+  
+  return FAT32_ERR_SUCCESS;
+}
+
+/*
+if (bootsec->bootSignature == EXTENDED_BOOT_SIG) {
+  Serial.print("Volume serial number: ");
+  Serial.println(bootsec->volumeSerialNumber);
+  Serial.print("Volume label: ");
+  Serial.println(bootsec->volumeLabel);
+  Serial.print("Type: ");
+  Serial.println(bootsec->fileSystemType);
+}
+*/
+
+/*
+// OJO!!!
+uint8_t block[512];
+memset(block, 0, 512);
+block[0] = 0x00;
+block[1] = 0x01;
+block[2] = 0x02;
+block[3] = 0x03;
+block[4] = 0x04;
+block[5] = 0x05;
+r = bulk->Write(0, 512, block, 0);
+if (r) {
+  Serial.print("ERROR: ");
+  Serial.println(r);
+  const SenseData s = bulk->GetLastSenseData();
+  Serial.print("Sense: ");
+  Serial.println(s.ErrorCode);
+  Serial.println(s.AdditionalSenseCode);
+  Serial.println(s.AdditionalSenseCodeQualifier);
+}  
+
+HexDumper<USBReadParser, uint16_t, uint16_t>		HexDump;
+r = bulk->Read(0, 512, (uint8_t*)&HexDump, 1);
+if (r) {
+  Serial.print("ERROR: ");
+  Serial.println(r);
+  const SenseData s = bulk->GetLastSenseData();
+  Serial.println("Sense");
+  Serial.println(s.Valid);
+  Serial.println((uint32_t)s.Information);
+  Serial.println(s.SenseKey);
+  Serial.println(s.AdditionalSenseCode);
+  Serial.println(s.AdditionalSenseCodeQualifier);
+}
+*/
 
 // Utility and parsers
 void FAT32DirEntParser::Parse(const uint16_t len, const uint8_t *pbuf, const uint16_t &offset) {
